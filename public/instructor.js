@@ -5,9 +5,10 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
   let S = null, view = 'ALPHA', aiming = null, settingsBuilt = false, scenBuilt = false;
+  const ITOKEN = new URLSearchParams(location.search).get('token') || '';
 
   const admin = (body) => fetch('/api/admin', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, token: ITOKEN }),
   }).then((r) => r.json()).catch(() => ({ error: 'no connection' }));
 
   function toast(text, bad) {
@@ -244,7 +245,7 @@
       <br><span class="txt">${esc(ev.text)}</span>`, LANE[ev.kind] || '');
   }
 
-  const es = new EventSource('/events?role=instructor');
+  const es = new EventSource('/events?role=instructor&token=' + encodeURIComponent(ITOKEN));
   es.addEventListener('history', (e) => {
     const h = JSON.parse(e.data);
     $('feed').innerHTML = ''; ser = 0;

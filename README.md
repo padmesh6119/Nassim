@@ -50,7 +50,7 @@ The trainee acts on (2). The debrief prices the gap between (2) and (3).
 
 ---
 
-## The layer other teams will not have
+## Judgement under contradiction
 
 - **Sources disagree on purpose.** A ground patrol, the drone feed and a signals intercept contradict
   each other about the same grid. The trainee decides who to believe — the commander's real problem is

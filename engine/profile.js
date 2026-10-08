@@ -27,7 +27,9 @@ class ProfileStore {
     if (!this.file) return;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2));
+      const tmp = this.file + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
+      fs.renameSync(tmp, this.file);
     } catch (e) { console.error('profile save failed:', e.message); }
   }
 

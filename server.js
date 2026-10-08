@@ -5,6 +5,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { Game, PIDS, SCENARIOS } = require('./engine/sim');
 const { ProfileStore } = require('./engine/profile');
 
@@ -25,6 +26,7 @@ const profiles = new ProfileStore(path.join(__dirname, 'aar', 'profiles.json'));
 const game = new Game('CONTESTED', {}, { profiles });
 const clients = new Set();     // { res, role, pid, id }
 let clientSeq = 0;
+const INSTRUCTOR_TOKEN = process.env.INSTRUCTOR_TOKEN || crypto.randomBytes(16).toString('hex');
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -73,7 +75,9 @@ function saveAar(aar) {
   try {
     fs.mkdirSync(AAR_DIR, { recursive: true });
     const id = `${aar.generatedAt.replace(/[:.]/g, '-')}-${aar.scenario.id}.json`;
-    fs.writeFileSync(path.join(AAR_DIR, id), JSON.stringify(aar));
+    const tmp1 = path.join(AAR_DIR, id + '.tmp');
+    fs.writeFileSync(tmp1, JSON.stringify(aar));
+    fs.renameSync(tmp1, path.join(AAR_DIR, id));
     const idx = readIndex();
     idx.unshift({
       id, generatedAt: aar.generatedAt, scenario: aar.scenario.id, scenarioName: aar.scenario.name,
@@ -87,7 +91,9 @@ function saveAar(aar) {
       enemiesTotal: aar.outcome.enemiesTotal, friendlyAlive: aar.outcome.friendlyAlive,
       redcell: aar.redcell.mode,
     });
-    fs.writeFileSync(INDEX_FILE, JSON.stringify(idx.slice(0, 200), null, 2));
+    const tmp2 = INDEX_FILE + '.tmp';
+    fs.writeFileSync(tmp2, JSON.stringify(idx.slice(0, 200), null, 2));
+    fs.renameSync(tmp2, INDEX_FILE);
     console.log('  AAR saved →', path.join('aar', id));
   } catch (e) { console.error('  AAR save failed:', e.message); }
 }
@@ -156,6 +162,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/events') {
     const role = url.searchParams.get('role') === 'instructor' ? 'instructor' : 'trainee';
     const pid = url.searchParams.get('pid');
+    if (role === 'instructor' && url.searchParams.get('token') !== INSTRUCTOR_TOKEN) return json(res, 401, { error: 'instructor token required' });
     if (role === 'trainee' && !PIDS.includes(pid)) return json(res, 400, { error: 'unknown callsign' });
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write('retry: 1000\n\n');
@@ -171,11 +178,13 @@ const server = http.createServer(async (req, res) => {
   // ---- trainee + instructor actions ----
   if (p === '/api/action' && req.method === 'POST') {
     const b = await readBody(req);
-    return json(res, 200, game.action(b.pid, b));
+    try { return json(res, 200, game.action(b.pid, b)); } catch (e) { console.error('action error:', e.stack); return json(res, 500, { error: 'internal error' }); }
   }
   if (p === '/api/admin' && req.method === 'POST') {
     const b = await readBody(req);
-    return json(res, 200, game.admin(b));
+    if (b.token !== INSTRUCTOR_TOKEN) return json(res, 401, { error: 'instructor token required' });
+    if (b.type === 'reset' && (game.status === 'RUNNING' || game.status === 'PAUSED')) return json(res, 400, { error: 'End the exercise before resetting' });
+    try { return json(res, 200, game.admin(b)); } catch (e) { console.error('admin error:', e.stack); return json(res, 500, { error: 'internal error' }); }
   }
 
   // ---- current exercise data ----
@@ -231,7 +240,7 @@ const server = http.createServer(async (req, res) => {
         meanLatencyMin: P.meanLatencyMin, mcScore: P.missionCommand.score, jammedMin: P.ew.jammedMin,
       }])),
     });
-    return json(res, 200, { a: pick(A), b: pick(B), comparable: A.scenario.id === B.scenario.id || true });
+    return json(res, 200, { a: pick(A), b: pick(B), comparable: A.scenario.id === B.scenario.id });
   }
 
   if (p === '/api/profiles') return json(res, 200, { profiles: profiles.list() });
@@ -298,8 +307,9 @@ server.listen(PORT, '0.0.0.0', () => {
   const host = ips[0] || 'localhost';
   const line = (l, u) => console.log(`    ${l.padEnd(12)} ${u}`);
   console.log('\n  \x1b[32mFOGLINE\x1b[0m — decision trainer for degraded communications');
+  console.log(`  instructor token: \x1b[33m${INSTRUCTOR_TOKEN}\x1b[0m`);
   console.log(`  scenario: ${game.scenario.name}\n`);
-  line('INSTRUCTOR', `http://${host}:${PORT}/instructor`);
+  line('INSTRUCTOR', `http://${host}:${PORT}/instructor?token=${INSTRUCTOR_TOKEN}`);
   for (const pid of PIDS) line(pid, `http://${host}:${PORT}/trainee?pid=${pid}`);
   line('REPLAY', `http://${host}:${PORT}/replay`);
   line('REPORT', `http://${host}:${PORT}/report`);
