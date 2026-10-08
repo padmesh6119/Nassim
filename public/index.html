@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOGLINE</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { background: var(--board); overflow: auto; }
+  .page { max-width: 1060px; margin: 0 auto; background: var(--paper); min-height: 100%; padding: 0 0 70px; }
+  header { padding: 44px 54px 26px; border-bottom: 2px solid var(--ink); }
+  .cls { font-family: var(--narrow); font-size: 12px; letter-spacing: .1em; color: var(--ink-3); }
+  h1 { font-family: var(--narrow); font-size: 62px; letter-spacing: .04em; margin: 4px 0 10px; font-weight: 600; }
+  .lede { font-size: 18px; line-height: 1.6; max-width: 60ch; margin: 0; }
+  .lede b { font-weight: 600; }
+  section { padding: 0 54px; margin-top: 36px; }
+  h2 { font-family: var(--narrow); font-size: 13px; letter-spacing: .1em; color: var(--ink-3); margin: 0 0 12px; font-weight: 600; }
+
+  .stations { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--rule-2); }
+  .st { display: block; padding: 17px 19px; border-right: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule-2); text-decoration: none; color: var(--ink); }
+  .st:nth-child(3n) { border-right: 0; }
+  .st:nth-last-child(-n+3) { border-bottom: 0; }
+  .st:hover { background: var(--paper-2); }
+  .st b { font-family: var(--narrow); font-size: 20px; display: block; letter-spacing: .02em; }
+  .st span { font-size: 12.5px; color: var(--ink-3); line-height: 1.45; display: block; margin-top: 3px; }
+  .st.cdr b { color: var(--blue); }
+  .st.inst b { color: var(--red); }
+
+  .measures { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 34px; }
+  .m { padding: 13px 0; border-top: 1px solid var(--rule); }
+  .m b { font-family: var(--narrow); font-size: 15px; letter-spacing: .02em; display: block; margin-bottom: 2px; }
+  .m span { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+
+  blockquote { margin: 0; padding: 16px 20px; border-left: 3px solid var(--red); background: rgba(184,35,43,.05); font-size: 17px; line-height: 1.6; }
+  footer { padding: 0 54px; margin-top: 40px; font-size: 12.5px; color: var(--ink-3); line-height: 1.7; border-top: 1px solid var(--rule); padding-top: 16px; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--paper-2); padding: 1px 5px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="cls">RESTRICTED — EXERCISE ONLY</div>
+    <h1>FOGLINE</h1>
+    <p class="lede">A decision trainer for degraded communications. Land, air, cyber and electronic warfare.
+      Other trainers break your radio. This one <b>learns exactly how you get fooled</b>, aims the next deception at it,
+      and proves — with a number — whether you got better.</p>
+  </header>
+
+  <section>
+    <h2>Stations</h2>
+    <div class="stations">
+      <a class="st inst" href="/instructor"><b>Instructor</b><span>Project this one. Truth beside belief, the injects, and the red cell.</span></a>
+      <a class="st cdr" href="/trainee?pid=ALPHA"><b>ALPHA</b><span>1 Platoon. Deny the western crossing.</span></a>
+      <a class="st cdr" href="/trainee?pid=BRAVO"><b>BRAVO</b><span>2 Platoon. Deny the eastern crossing.</span></a>
+      <a class="st cdr" href="/trainee?pid=CHARLIE"><b>CHARLIE</b><span>3 Platoon. Reserve, holding Rampur.</span></a>
+      <a class="st" href="/replay"><b>Replay</b><span>Scrub back through the exercise, truth beside belief.</span></a>
+      <a class="st" href="/report"><b>Debrief</b><span>The cost of fog, decision timelines, exports.</span></a>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it measures</h2>
+    <div class="measures">
+      <div class="m"><b>Who you believe</b><span>Ground patrol, drone feed and signals intercept disagree about the same ground on purpose. You decide which is right.</span></div>
+      <div class="m"><b>How sure you were, and whether you should have been</b><span>Every call carries a confidence. Saying 90% and being right half the time is scored as the failure it is.</span></div>
+      <div class="m"><b>An opponent that learns you</b><span>Lean on the drone and it spoofs the drone. Trust the patrol's "all clear" and the patrol goes stale. Your record follows your name between rounds.</span></div>
+      <div class="m"><b>Proof you got better</b><span>Calibration round by round, from real play, with the sample size shown beside every figure.</span></div>
+      <div class="m"><b>Cost of fog</b><span>For every threat, when a commander could have known, against when they did. The gap is the headline.</span></div>
+      <div class="m"><b>Casualties taken blind</b><span>Losses to enemies that were not on the commander's map when contact began, kept separate from losses taken with eyes open.</span></div>
+      <div class="m"><b>How deception was handled</b><span>Phantom contacts, forged orders and false kill reports, each traced from injection to whether it was believed, checked or refused.</span></div>
+      <div class="m"><b>Mission command</b><span>When a commander is cut off, do they keep acting on the commander's intent, or wait for orders that are never coming?</span></div>
+      <div class="m"><b>The shared picture</b><span>How far the three commanders' maps drifted apart, second by second.</span></div>
+      <div class="m"><b>The red cell's judgement</b><span>An automated adversary that picks its own moment to jam or deceive, and writes down why it chose it.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The case</h2>
+    <blockquote>Other trainers break your radio. Ours learns exactly how you get fooled, then proves — with a number — that you got better.</blockquote>
+  </section>
+
+  <footer>
+    Problem statement 26248 · Ministry of Defence · Defence Services Staff College.<br>
+    Four scenarios ship with it: a clear-comms control run; a contested electronic warfare run on the identical
+    enemy package; a full deception run; and a two-minute source drill built to be repeated, where the opponent
+    learns each trainee and the debrief tracks their calibration across rounds. Runs offline on a closed network — no internet, no dependencies. <code>npm start</code>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOGLINE — replay</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  .sheetcol { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #16150f; }
+  .sheetcol:last-child { border-right: 0; }
+  .tabs { display: flex; gap: 5px; margin-left: auto; }
+  .tabs button {
+    font-family: var(--narrow); font-size: 12.5px; letter-spacing: .05em;
+    background: none; border: 1px solid var(--board-3); color: #9a9281; padding: 3px 10px;
+  }
+  .tabs button.on { background: #ded5c0; color: var(--board); border-color: #ded5c0; }
+
+  .transport { flex: none; background: var(--board); border-top: 1px solid #16150f; padding: 9px 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .marks { position: relative; height: 18px; }
+  .mark { position: absolute; top: 0; transform: translateX(-50%); font-size: 12px; cursor: pointer; line-height: 1; }
+  .mark:hover { filter: brightness(1.5); }
+  input[type=range] { width: 100%; accent-color: #ded5c0; height: 20px; }
+  .lanes { display: grid; grid-template-columns: 78px 1fr; gap: 3px 10px; align-items: center; }
+  .lanes .nm { font-family: var(--narrow); font-size: 12.5px; letter-spacing: .05em; color: #9a9281; }
+  .lanes canvas { width: 100%; height: 24px; display: block; cursor: pointer; }
+  .keys { display: flex; gap: 16px; font-size: 11.5px; color: #9a9281; flex-wrap: wrap; align-items: center; }
+  .keys i { display: inline-block; width: 10px; height: 9px; margin-right: 5px; vertical-align: -1px; }
+  .keys i.ln { height: 2px; width: 14px; vertical-align: 4px; }
+  .empty { padding: 90px; text-align: center; color: #9a9281; grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="rail">
+  <span class="mark" style="position:static;transform:none">FOGLINE<span>replay</span></span>
+  <select id="runSel"></select>
+  <button class="btn go" id="playBtn">Play</button>
+  <select id="speedSel" title="Speed">
+    <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+    <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+  </select>
+  <span class="clock" id="clock">--:--:--</span>
+  <span class="sub" id="pos"></span>
+  <span class="spacer"></span>
+  <span class="sub" id="meta"></span>
+  <a class="btn" href="/report" target="_blank">Debrief</a>
+  <a class="btn go" href="/instructor">Console</a>
+</div>
+
+<main id="main">
+  <div class="sheetcol">
+    <div class="sheethead"><span class="which">Ground truth</span><span class="note">where everything actually was</span>
+      <span class="right" id="truthSub"></span></div>
+    <div class="sheetbox"><canvas class="map" id="truth"></canvas></div>
+  </div>
+  <div class="sheetcol">
+    <div class="sheethead"><span class="which" id="bTitle">As ALPHA believed it</span>
+      <span class="tabs" id="tabs"></span></div>
+    <div class="sheetbox"><canvas class="map" id="belief"></canvas></div>
+  </div>
+</main>
+
+<div class="transport" id="scrub">
+  <div class="marks" id="marks"></div>
+  <input type="range" id="range" min="0" max="0" value="0" step="1">
+  <div class="lanes" id="lanes"></div>
+  <div class="keys">
+    <span><i style="background:#b8232b;opacity:.55"></i>net degraded</span>
+    <span><i class="ln" style="background:#2e6b4f"></i>picture accuracy</span>
+    <span style="color:#d9a63f">⚑ marked moment</span>
+    <span style="color:#b99ae0">◆ inject</span>
+    <span style="color:#e8898d">✕ contact</span>
+    <span>click a lane or a mark to jump · space plays · arrows step · 1 2 3 switch commander</span>
+  </div>
+</div>
+
+<script src="/terrain.js"></script>
+<script src="/map.js"></script>
+<script src="/frame.js"></script>
+<script src="/replay.js"></script>
+</body>
+</html>

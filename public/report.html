@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOGLINE — after action review</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  /* Chart tokens, validated against the paper surface #e8e1d0 in light mode.
+     Only slot1/slot2 carry identity; the rest are reserved status. */
+  :root {
+    --c-slot1: #1b4f9c;
+    --c-slot2: #8f6310;
+    --c-good: #2e6b4f;
+    --c-warn: #8f6310;
+    --c-crit: #b8232b;
+    --c-adv:  #6b3fa0;
+    --c-grid: rgba(33,30,24,0.14);
+  }
+  body { overflow: auto; background: var(--board); }
+  .page {
+    max-width: 1280px; margin: 0 auto; background: var(--paper);
+    padding: 0 0 72px; min-height: 100%;
+  }
+  .pagehead { padding: 30px 48px 22px; border-bottom: 2px solid var(--ink); }
+  .pagehead h1 { font-family: var(--narrow); font-size: 34px; letter-spacing: .02em; margin: 0 0 3px; font-weight: 600; }
+  .pagehead .sub { font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+  .pagehead .cls { font-family: var(--narrow); font-size: 12px; letter-spacing: .1em; color: var(--ink-3); margin-bottom: 9px; }
+
+  section { padding: 0 48px; margin-top: 34px; }
+  section > h2 {
+    font-family: var(--narrow); font-size: 19px; font-weight: 600; letter-spacing: .01em;
+    margin: 0 0 3px; padding-bottom: 5px; border-bottom: 1px solid var(--ink);
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  section > h2 .n { font-family: var(--mono); font-size: 14px; color: var(--ink-3); }
+  section > h2 .note { font-family: var(--sans); font-weight: 400; font-size: 13.5px; color: var(--ink-3); margin-left: auto; }
+  section > p { max-width: 74ch; margin: 11px 0; }
+
+  /* the finding, set as the document's one large figure */
+  .finding { display: grid; grid-template-columns: auto 1fr; gap: 34px; align-items: start; margin: 18px 0 6px; }
+  .bignum { font-family: var(--narrow); font-size: 76px; line-height: .95; color: var(--c-crit); font-weight: 600; }
+  .bignum small { display: block; font-size: 15px; color: var(--ink-2); letter-spacing: 0; margin-top: 7px; max-width: 24ch; line-height: 1.4; }
+  .finding ul { margin: 0; padding-left: 19px; max-width: 72ch; }
+  .finding li { margin: 7px 0; line-height: 1.6; }
+
+  .figs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--rule-2); margin-top: 16px; }
+  .fig { padding: 13px 15px; border-right: 1px solid var(--rule-2); }
+  .fig:last-child { border-right: 0; }
+  .fig .v { font-family: var(--narrow); font-size: 29px; line-height: 1.05; }
+  .fig .k { font-size: 12px; color: var(--ink-3); margin-top: 5px; line-height: 1.45; }
+
+  figure { margin: 15px 0 0; }
+  figure svg { width: 100%; display: block; overflow: visible; }
+  figcaption { font-size: 12.5px; color: var(--ink-3); margin-top: 9px; display: flex; gap: 17px; flex-wrap: wrap; align-items: center; }
+  figcaption i { display: inline-block; width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; }
+  figcaption i.ln { height: 2px; width: 15px; vertical-align: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-family: var(--narrow); font-size: 12px; letter-spacing: .05em; color: var(--ink-3); border-bottom: 1.5px solid var(--ink); }
+  td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--paper-2); }
+  .scrollbox { max-height: 520px; overflow: auto; border: 1px solid var(--rule-2); }
+  .scrollbox table { margin: 0; }
+  .scrollbox th { position: sticky; top: 0; background: var(--paper); }
+
+  .good { color: var(--c-good); } .bad { color: var(--c-crit); } .warn { color: var(--c-warn); } .adv { color: var(--c-adv); }
+  .meter { display: inline-block; height: 6px; width: 84px; background: rgba(33,30,24,.12); vertical-align: 1px; }
+  .meter i { display: block; height: 100%; }
+
+  .who { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-top: 1px solid var(--rule-2); }
+  .cdr { padding: 15px 17px; border-right: 1px solid var(--rule-2); }
+  .cdr:last-child { border-right: 0; }
+  .cdr h4 { font-family: var(--narrow); font-size: 20px; margin: 0 0 9px; font-weight: 600; }
+  .cdr h4 small { font-family: var(--sans); font-size: 12px; color: var(--ink-3); font-weight: 400; margin-left: 7px; }
+  .cdr dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+  .cdr dt { color: var(--ink-3); }
+  .cdr dd { margin: 0; }
+  .cdr h5 { font-family: var(--narrow); font-size: 12px; letter-spacing: .06em; color: var(--ink-3); margin: 14px 0 0; font-weight: 600; }
+  .trace { margin-top: 9px; padding: 9px 11px; border-left: 2px solid var(--c-adv); background: rgba(107,63,160,.06); font-size: 12.5px; line-height: 1.5; }
+  .trace b { font-family: var(--narrow); letter-spacing: .03em; }
+  .steps { color: var(--ink-3); font-size: 11.5px; margin-top: 4px; }
+  .verdict { display: inline-block; font-family: var(--narrow); font-size: 11.5px; letter-spacing: .05em; padding: 1px 7px; border: 1px solid currentColor; }
+
+  .moment { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 14px; border: 1px solid var(--rule-2); }
+  .moment > div { display: flex; flex-direction: column; }
+  .moment > div + div { border-left: 1px solid var(--rule-2); }
+  .moment .cap { font-family: var(--narrow); font-size: 15px; padding: 7px 12px; border-bottom: 1px solid var(--rule-2); }
+  .moment .cap span { font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); margin-left: 7px; }
+  .moment canvas { width: 100%; height: 400px; display: block; }
+  .momentnote { max-width: 74ch; margin: 12px 0 0; }
+  .momentnote b { font-weight: 600; }
+
+  .callout { font-size: 14px; line-height: 1.55; margin: 0 0 8px; }
+  .kv2 { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; margin: 0 0 8px; flex-wrap: wrap; }
+  .kv2 b { font-family: var(--mono); font-size: 15px; }
+  .lean2 { font-size: 13px; line-height: 1.5; margin: 0 0 8px; }
+  table.tight { margin-top: 6px; font-size: 12px; }
+  table.tight th, table.tight td { padding: 4px 6px; }
+  .progs { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 0; border: 1px solid var(--rule-2); margin-top: 12px; }
+  .prog { padding: 13px 15px; border-right: 1px solid var(--rule-2); }
+  .prog:last-child { border-right: 0; }
+  .prog h4 { font-family: var(--narrow); font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; align-items: baseline; gap: 10px; }
+  .prog svg { width: 100%; display: block; }
+
+  #tip {
+    position: fixed; z-index: 90; pointer-events: none; display: none;
+    background: var(--ink); color: var(--paper); padding: 8px 10px;
+    font-size: 12.5px; line-height: 1.5; max-width: 320px;
+  }
+  #tip b { color: #fff; }
+  .empty { padding: 90px 48px; font-size: 15px; color: var(--ink-3); }
+
+  @media print {
+    body { background: #fff; } .page { max-width: none; }
+    .rail { display: none; } .scrollbox { max-height: none; overflow: visible; }
+  }
+</style>
+</head>
+<body>
+<div class="rail">
+  <span class="mark">FOGLINE<span>after action review</span></span>
+  <span class="sub" id="meta"></span>
+  <span class="spacer"></span>
+  <select id="runPick"></select>
+  <a class="btn" id="dlJson" href="/api/aar.json">JSON</a>
+  <a class="btn" id="dlCsv" href="/api/aar.csv">Spreadsheet</a>
+  <button class="btn" onclick="print()">Print</button>
+  <a class="btn" href="/replay" target="_blank">Replay</a>
+  <a class="btn go" href="/instructor">Console</a>
+</div>
+<div class="page" id="root"><div class="empty">Loading.</div></div>
+<div id="tip"></div>
+<script src="/terrain.js"></script>
+<script src="/map.js"></script>
+<script src="/frame.js"></script>
+<script src="/report.js"></script>
+</body>
+</html>

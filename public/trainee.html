@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOGLINE — commander</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 384px; min-height: 0; }
+  .left { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #16150f; }
+  .right { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; background: var(--paper); }
+  .right > * + * { border-top: 1.5px solid var(--ink); }
+
+  /* the order form sits on paper, directly under the sheet */
+  .orderform { flex: none; background: var(--paper); padding: 10px 14px; display: flex; flex-direction: column; gap: 9px; }
+  .formrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .formrow .lbl { font-family: var(--narrow); font-size: 11.5px; letter-spacing: .09em; color: var(--ink-3); width: 54px; flex: none; }
+  .formrow input[type=text] { flex: 1; min-width: 160px; }
+  .why { display: flex; gap: 4px; flex-wrap: wrap; }
+  .why button { font-family: var(--sans); font-size: 12px; padding: 3px 9px; border: 1px solid var(--rule-2); background: none; color: var(--ink-2); }
+  .why button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+  .task { padding: 11px 13px; font-size: 13.5px; line-height: 1.55; }
+  .task .mytask { font-size: 15px; margin-bottom: 7px; }
+  .task .mytask b { font-family: var(--narrow); letter-spacing: .03em; }
+  .task .intent { color: var(--ink-2); font-size: 12.5px; border-top: 1px solid var(--rule); padding-top: 7px; margin-top: 7px; }
+  .task .mytask { margin-bottom: 4px; }
+  .intentbtn { font-family: var(--narrow); font-size: 12px; letter-spacing: .04em; background: none; border: 1px solid var(--rule-2); color: var(--ink-2); padding: 2px 9px; margin-top: 4px; }
+  .intentbtn:hover { background: var(--paper-2); }
+
+  .gps { font-family: var(--narrow); font-size: 12px; letter-spacing: .05em; padding: 2px 8px; border: 1px solid #55524a; color: #9a9281; }
+  .gps.bad { color: #c3a6e8; border-color: var(--violet); }
+  .hp { font-family: var(--mono); font-weight: 600; transition: color .2s; }
+  .hp.hit { animation: hit .7s ease-out; }
+  @keyframes hit { 0% { color: #fff; background: var(--red); } 100% { background: transparent; } }
+
+  /* contact: the one moment the sheet is allowed to shout */
+  .contactbar {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 3;
+    display: none; align-items: baseline; gap: 12px;
+    background: var(--red); color: #fff; padding: 8px 18px;
+    font-family: var(--narrow); font-size: 18px; letter-spacing: .06em;
+    box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  }
+  .contactbar.on { display: flex; animation: pulse 1.6s ease-in-out infinite; }
+  .contactbar small { font-family: var(--sans); font-size: 13px; letter-spacing: 0; opacity: .9; }
+  @keyframes pulse { 50% { background: #8f1a20; } }
+  @media (prefers-reduced-motion: reduce) { .contactbar.on, .hp.hit { animation: none; } }
+
+  .downbar {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 3;
+    display: none; flex-direction: column; align-items: center; gap: 3px; text-align: center;
+    background: var(--ink); color: var(--paper); padding: 11px 22px; max-width: 70%;
+    box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  }
+  .downbar.on { display: flex; }
+  .downbar b { font-family: var(--narrow); font-size: 19px; letter-spacing: .05em; }
+  .downbar span { font-size: 13px; opacity: .85; }
+  .orderform.dead { opacity: .35; pointer-events: none; }
+  .track.fresh { animation: fresh 2.4s ease-out; }
+  @keyframes fresh { 0% { background: rgba(184,35,43,.22); } 100% { background: transparent; } }
+</style>
+</head>
+<body>
+<div class="rail">
+  <span class="mark" id="callsign">—</span>
+  <span class="sub" id="unitname"></span>
+  <span class="state" id="status">—</span>
+  <span class="clock" id="clock">--:--:--</span>
+  <span class="sub" id="left"></span>
+  <span class="spacer"></span>
+  <span class="sub">strength <b class="hp" id="hp">100</b></span>
+  <span class="sub">fire missions <b class="hp" id="rounds">—</b></span>
+  <span class="gps" id="gps">GPS good</span>
+  <span class="sub" style="display:flex;align-items:center;gap:7px">net <span class="bars" id="signal"></span></span>
+  <button class="btn" id="soundBtn" title="Radio sound">sound on</button>
+</div>
+
+<main>
+  <div class="left">
+    <div class="sheetbox">
+      <canvas class="map" id="map"></canvas>
+      <div class="stamp" id="modeBadge">move</div>
+      <div class="contactbar" id="contactbar"></div>
+      <div class="downbar" id="downbar"></div>
+    </div>
+    <div class="orderform onpaper">
+      <div class="formrow">
+        <button class="btn on" data-mode="move">Move <span class="quiet">M</span></button>
+        <button class="btn warn" data-mode="fire">Fire mission <b id="roundsBtn"></b> <span class="quiet">F</span></button>
+        <button class="btn go" data-mode="uav">UAV sweep <span class="quiet">U</span></button>
+        <button class="btn" id="holdBtn">Hold and defend <span class="quiet">H</span></button>
+        <button class="btn deceive" id="authBtn" title="Challenge the last order from HQ over the net">Authenticate order <span class="quiet">A</span></button>
+        <span class="quiet" id="refHint" style="font-size:12.5px"></span>
+      </div>
+      <div class="formrow" id="pendingRow" style="display:none">
+        <span class="lbl">In the air</span>
+        <span id="pending" style="font-size:12.5px"></span>
+      </div>
+      <div class="formrow">
+        <span class="lbl">Reason</span>
+        <div class="why" id="why"></div>
+        <input type="text" id="rationale" placeholder="Why you are giving this order — it goes in the debrief">
+      </div>
+      <div class="formrow">
+        <span class="lbl">Team net</span>
+        <input type="text" id="chat" placeholder="Message the other commanders. Rides your radio, so it can be late or lost.">
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card" style="min-height:0">
+      <h3>Mission <span class="spacer"></span><span id="scenName" style="letter-spacing:0;text-transform:none"></span></h3>
+      <div class="task" id="task"></div>
+    </div>
+    <div class="card" style="max-height:50vh">
+      <h3>Contacts <span class="spacer"></span><span style="letter-spacing:0;text-transform:none">your picture only</span></h3>
+      <div class="body" id="tracks"></div>
+    </div>
+    <div class="log">
+      <div class="log-head">
+        <span>Ser</span><span>Time in</span><span>From and message <span id="netState" style="float:right"></span></span>
+      </div>
+      <div class="log-body" id="log"></div>
+    </div>
+  </div>
+</main>
+
+<div class="curtain" id="curtain" style="display:none"></div>
+<script src="/terrain.js"></script>
+<script src="/map.js"></script>
+<script src="/radio.js"></script>
+<script src="/trainee.js"></script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOGLINE — instructor</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) 352px; grid-template-rows: 1fr auto; min-height: 0; }
+  .sheetcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid #16150f; }
+  .rail2 { grid-column: 3; grid-row: 1 / span 2; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; overflow: hidden; background: var(--paper); }
+  .rail2 .card > h3 { white-space: nowrap; overflow: hidden; }
+  /* the button rows were setting the rail's width; let them wrap instead */
+  .rail2 > *, .rail2 .card, .rail2 .log, .rail2 .body, .rail2 .log-body { min-width: 0; }
+  .rail2 .onpaper { flex-wrap: wrap; }
+  .prop .hdr { overflow-wrap: anywhere; }
+  .prop .arg { overflow-wrap: anywhere; }
+  .rcrow span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail2 > * + * { border-top: 1.5px solid var(--ink); }
+  .desks { grid-column: 1 / span 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; background: var(--board); border-top: 1px solid #16150f; }
+  .desk { padding: 9px 13px; border-right: 1px solid #16150f; display: flex; flex-direction: column; gap: 8px; color: #ded5c0; }
+  .desk:last-child { border-right: 0; }
+  .desk.sel { background: var(--board-2); }
+  .desk.cut { box-shadow: inset 0 2px 0 var(--red); }
+  .desk.down { background: #221f1b; }
+  .desk.down .cs { color: #7b7265; text-decoration: line-through; text-decoration-thickness: 1.5px; }
+  .desk.down .acts, .desk.down .gauge { opacity: .25; pointer-events: none; }
+  .desk.down .lead b { color: #7b7265 !important; }
+  .desk .who { display: flex; align-items: center; gap: 8px; }
+  .desk .cs { font-family: var(--narrow); font-size: 19px; letter-spacing: .05em; color: #fff; cursor: pointer; }
+  .desk .unit { font-family: var(--mono); font-size: 11px; color: #9a9281; }
+  .desk .net { margin-left: auto; font-family: var(--narrow); font-size: 12.5px; letter-spacing: .04em; }
+  .gauge { height: 3px; background: #16150f; }
+  .gauge i { display: block; height: 100%; background: var(--red); width: 0; transition: width .25s; }
+  .nums { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: #9a9281; }
+  .nums b { color: #ded5c0; font-family: var(--mono); font-size: 13.5px; font-weight: 600; display: block; }
+  .acts { display: flex; gap: 4px; flex-wrap: wrap; }
+  .acts .btn { padding: 5px 9px; font-size: 12px; }
+
+  .ewstrip { display: flex; gap: 6px; align-items: center; padding: 6px 13px; background: var(--board-2); border-bottom: 1px solid #16150f; flex: none; flex-wrap: wrap; }
+  .ewstrip .lbl { font-family: var(--narrow); font-size: 11.5px; letter-spacing: .09em; color: #9a9281; }
+  .ewstrip .btn { padding: 4px 9px; font-size: 11.5px; }
+  .em { font-family: var(--mono); font-size: 11px; padding: 3px 7px; border: 1px solid var(--board-3); color: #9a9281; cursor: pointer; }
+  .em.live { border-color: var(--red); color: #e8898d; }
+  .em.live.spf { border-color: var(--violet); color: #b99ae0; }
+
+  .aim { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3; display: none;
+         background: var(--violet); color: #fff; font-family: var(--narrow); font-size: 13.5px; letter-spacing: .04em; padding: 5px 13px; white-space: nowrap; }
+
+  .gap { padding: 5px 13px; font-size: 12px; color: #9a9281; background: var(--board-2); flex: none; }
+  .gap b { color: #ded5c0; font-family: var(--mono); }
+  .gapnotes { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 6px 13px 8px; background: var(--board-2); border-bottom: 1px solid #16150f; flex: none; min-height: 34px; }
+  .gapnotes span { font-size: 14.5px; line-height: 1.35; display: inline-flex; gap: 7px; align-items: baseline; }
+  .gapnotes span::before { content: ''; width: 7px; height: 7px; flex: none; transform: translateY(-1px); }
+  .gapnotes .bad { color: #f0b3b5; } .gapnotes .bad::before { background: var(--red); }
+  .gapnotes .adv { color: #cdb5ee; } .gapnotes .adv::before { background: var(--violet); }
+  .gapnotes .warn { color: #e8c983; } .gapnotes .warn::before { background: var(--ochre); }
+  .gapnotes .ok { color: #9fd3b4; } .gapnotes .ok::before { background: var(--green); }
+
+  .viewtabs { display: inline-flex; gap: 4px; margin-left: 6px; }
+  .viewtabs button { font-family: var(--narrow); font-size: 12.5px; letter-spacing: .05em; background: none; border: 1px solid var(--board-3); color: #9a9281; padding: 2px 9px; }
+  .viewtabs button.on { background: #ded5c0; color: var(--board); border-color: #ded5c0; }
+  .viewtabs button:hover:not(.on) { color: #ded5c0; }
+  .fogread { display: inline-flex; align-items: baseline; gap: 7px; padding: 3px 12px; border-left: 1px solid var(--board-3); border-right: 1px solid var(--board-3); }
+  .fogread .k { font-family: var(--narrow); font-size: 12.5px; letter-spacing: .05em; color: #9a9281; }
+  .fogread b { font-family: var(--narrow); font-size: 27px; font-weight: 600; color: #ded5c0; min-width: 2.2ch; text-align: right; transition: color .4s; }
+  .fogread b.rising { color: #f08a8e; }
+  .fogread .u { font-family: var(--narrow); font-size: 13px; color: #9a9281; }
+
+  .desk .whoname { font-family: var(--narrow); font-size: 15px; color: #ded5c0; letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; }
+  .judge { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 11.5px; color: #9a9281; border-top: 1px solid #3a382f; padding-top: 6px; }
+  .judge .n { font-family: var(--mono); font-size: 10.5px; }
+  .judge .cal { border-left: 1px solid #4a473c; padding-left: 10px; }
+  .judge .lean { color: #ded5c0; }
+  .judge .lean.hunted { color: #cdb5ee; }
+  .judge .lean.probe { color: #b9b0a0; }
+  .judge .lean.none { color: #7b7265; }
+  .desk .lead { display: flex; align-items: baseline; gap: 9px; }
+  .desk .lead b { font-family: var(--narrow); font-size: 25px; font-weight: 600; line-height: 1; }
+  .desk .lead span { font-size: 12px; color: #9a9281; }
+
+  /* red cell proposals read as signals, not as cards */
+  .prop { padding: 10px 12px; border-bottom: 1px solid var(--rule); box-shadow: inset 3px 0 0 var(--violet); }
+  .prop .hdr { font-family: var(--narrow); font-size: 14px; letter-spacing: .03em; color: var(--violet); }
+  .prop .hdr span { font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0; }
+  .prop .arg { font-size: 13px; line-height: 1.5; margin: 5px 0 8px; }
+  .rcrow { display: grid; grid-template-columns: 62px 1fr; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-2); }
+  .rcrow .md { font-family: var(--narrow); font-size: 11px; letter-spacing: .07em; }
+  .rcrow .AUTO { color: var(--violet); } .rcrow .APPROVED { color: var(--green); }
+  .rcrow .DISMISSED, .rcrow .EXPIRED { color: var(--ink-3); }
+
+  .fogread { white-space: nowrap; }
+  .desk .who { white-space: nowrap; min-width: 0; }
+  .desk .unit, .desk .net { overflow: hidden; text-overflow: ellipsis; }
+
+  /* smaller screens and older projectors: keep every control, lose the furniture */
+  @media (max-width: 1560px) {
+    main { grid-template-columns: minmax(0,1fr) minmax(0,1fr) 300px; }
+    .rail .mark span { display: none; }
+    .rail .btn { padding: 5px 9px; font-size: 12.5px; }
+    .rail { gap: 10px; }
+  }
+  @media (max-width: 1380px) {
+    main { grid-template-columns: minmax(0,1fr) minmax(0,1fr) 264px; }
+    .rail { padding: 0 10px; gap: 7px; }
+    .rail .clock { font-size: 19px; }
+    #remaining { display: none; }
+    #scenSel { max-width: 150px; font-size: 12px; padding: 5px 6px; }
+    .fogread { padding: 2px 8px; }
+    .fogread b { font-size: 22px; }
+    .sheethead { font-size: 14px; padding: 6px 10px; gap: 8px; }
+    .sheethead .note { display: none; }
+    .ewstrip { padding: 5px 10px; gap: 4px; }
+    .ewstrip .lbl { display: none; }
+    .gapnotes span { font-size: 13px; }
+    .desk { padding: 8px 10px; gap: 6px; }
+    .desk .unit { display: none; }
+    .desk .cs { font-size: 17px; }
+    .desk .lead b { font-size: 21px; }
+    .nums { gap: 10px; font-size: 11px; }
+    .nums b { font-size: 12.5px; }
+    .acts .btn { padding: 4px 7px; font-size: 11px; }
+    .prop .arg { font-size: 12.5px; }
+    .rail2 .entry, .rail2 .log-head { grid-template-columns: 32px 60px minmax(0, 1fr); gap: 6px; padding-left: 9px; padding-right: 9px; }
+  }
+
+  #settings { display: none; gap: 12px; flex-wrap: wrap; align-items: end; padding: 11px 16px; background: var(--board-2); border-bottom: 1px solid #16150f; flex: none; }
+  #settings label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #9a9281; }
+  #settings input { width: 94px; }
+</style>
+</head>
+<body>
+<div class="rail">
+  <span class="mark">FOGLINE<span>instructor</span></span>
+  <span class="state" id="status">—</span>
+  <span class="clock" id="clock">--:--:--</span>
+  <span class="sub" id="remaining"></span>
+  <span class="fogread" title="How much later the commanders learned of the threats that reached them than they could have on a working net">
+    <span class="k">cost of fog</span><b id="fogTeam">0.0</b><span class="u">min</span>
+  </span>
+  <span class="fogread" id="callsRead" style="display:none" title="Disagreements between sources that the commanders decided correctly, this round">
+    <span class="k">called right</span><b id="callsVal">0</b><span class="u" id="callsOf">of 0</span>
+  </span>
+  <select id="scenSel" title="Scenario"></select>
+  <span class="spacer"></span>
+  <button class="btn" id="cfgBtn">Settings</button>
+  <button class="btn" id="markBtn" title="Mark this moment for the replay">Mark moment</button>
+  <button class="btn go" id="startBtn">Start</button>
+  <button class="btn warn" id="pauseBtn">Pause</button>
+  <button class="btn alarm" id="endBtn">Endex</button>
+  <button class="btn" id="resetBtn">Reset</button>
+  <a class="btn" href="/replay" target="_blank">Replay</a>
+  <a class="btn go" id="reportBtn" href="/report" target="_blank">Debrief</a>
+</div>
+<div id="settings"></div>
+
+<main>
+  <div class="sheetcol">
+    <div class="sheethead">
+      <span class="which">Ground truth</span>
+      <span class="note">where everything actually is</span>
+      <span class="right" id="truthSub"></span>
+    </div>
+    <div class="ewstrip" id="ewstrip"></div>
+    <div class="sheetbox">
+      <div class="aim" id="aim"></div>
+      <canvas class="map" id="truth"></canvas>
+    </div>
+  </div>
+
+  <div class="sheetcol" style="border-right:0">
+    <div class="sheethead">
+      <span class="which" id="beliefTitle">As ALPHA believes it</span>
+      <span class="viewtabs" id="viewtabs">
+        <button data-v="ALPHA">ALPHA</button><button data-v="BRAVO">BRAVO</button><button data-v="CHARLIE">CHARLIE</button>
+      </span>
+      <span class="right" id="acc"></span>
+    </div>
+    <div class="gap" id="gapline"></div>
+    <div class="gapnotes" id="gapnotes"></div>
+    <div class="sheetbox"><canvas class="map" id="belief"></canvas></div>
+  </div>
+
+  <div class="rail2">
+    <div class="card" style="max-height:46vh">
+      <h3>Red cell
+        <span class="spacer"></span>
+        <span id="rcBudget" style="letter-spacing:0;text-transform:none"></span>
+      </h3>
+      <div class="onpaper" style="display:flex;gap:5px;padding:7px 12px;border-bottom:1px solid var(--rule);flex:none">
+        <button class="btn" data-rc="OFF">Off</button>
+        <button class="btn" data-rc="ASSIST">Propose</button>
+        <button class="btn deceive" data-rc="AUTO">Automatic</button>
+      </div>
+      <div class="body" style="padding:0" id="rcBody"></div>
+    </div>
+    <div class="log">
+      <div class="log-head">
+        <span>Ser</span><span>Time</span><span>Decisions and events</span>
+      </div>
+      <div class="onpaper" style="display:flex;gap:5px;padding:7px 12px;border-bottom:1px solid var(--rule);flex:none">
+        <select id="msgTo"><option>ALL</option><option>ALPHA</option><option>BRAVO</option><option>CHARLIE</option></select>
+        <input type="text" id="msgText" placeholder="Message from HQ, Enter to send" style="flex:1;min-width:0">
+      </div>
+      <div class="log-body" id="feed"></div>
+    </div>
+  </div>
+
+  <div class="desks" id="desks"></div>
+</main>
+<script src="/terrain.js"></script>
+<script src="/map.js"></script>
+<script src="/instructor.js"></script>
+</body>
+</html>

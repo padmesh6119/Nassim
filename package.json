@@ -1,0 +1,17 @@
+{
+  "name": "fogline",
+  "version": "1.0.0",
+  "description": "FOGLINE \u2014 immersive multi-domain decision-making trainer for degraded communication environments (SIH PS 26248, Defence Services Staff College)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/engine.test.js && node test/judgement.test.js && node test/frontend.test.js",
+    "test:fuzz": "FOGLINE_FUZZ=1 node test/engine.test.js && node test/judgement.test.js && node test/frontend.test.js",
+    "shots": "node tools/shoot.js /tmp/shots 3000 \"instructor=/instructor@1760x1040\" \"trainee=/trainee?pid=BRAVO@1600x1000\" \"report=/report@1420x2300\" \"replay=/replay@1600x1000\" \"index=/@1200x980\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "license": "UNLICENSED"
+}
