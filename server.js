@@ -1,6 +1,10 @@
 'use strict';
 // FOGLINE server. Zero dependencies, runs entirely on a closed local network:
 // one laptop serves, the rest join over WiFi. Nothing leaves the room.
+//
+// Who may see what is decided here, at the one boundary every request crosses:
+// the instructor holds a token, each commander a four-digit seat code. While an
+// exercise is running, nothing that carries the truth leaves without the token.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -8,25 +12,21 @@ const os = require('os');
 const crypto = require('crypto');
 const { Game, PIDS, SCENARIOS } = require('./engine/sim');
 const { ProfileStore } = require('./engine/profile');
+const { buildReport } = require('./engine/aar');
 
 const PORT = +process.env.PORT || 3000;
 const TICK_MS = 200;
 const PUBLIC = path.join(__dirname, 'public');
-const AAR_DIR = path.join(__dirname, 'aar');
-const INDEX_FILE = path.join(AAR_DIR, 'index.json');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 };
-const PAGES = { '/': 'index.html', '/trainee': 'trainee.html', '/instructor': 'instructor.html', '/report': 'report.html', '/replay': 'replay.html' };
-
-const profiles = new ProfileStore(path.join(__dirname, 'aar', 'profiles.json'));
-const game = new Game('CONTESTED', {}, { profiles });
-const clients = new Set();     // { res, role, pid, id }
-let clientSeq = 0;
-const INSTRUCTOR_TOKEN = process.env.INSTRUCTOR_TOKEN || crypto.randomBytes(16).toString('hex');
+const PAGES = {
+  '/': 'index.html', '/trainee': 'trainee.html', '/instructor': 'instructor.html', '/report': 'report.html',
+  '/replay': 'replay.html',
+};
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -46,62 +46,35 @@ const download = (res, name, type, body) => {
 
 function readBody(req) {
   return new Promise((resolve) => {
-    let b = '';
-    req.on('data', (c) => { b += c; if (b.length > 2e5) req.destroy(); });
-    req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve({}); } });
+    let b = '', over = false;
+    req.on('data', (c) => { if (over) return; b += c; if (b.length > 2e5) { over = true; resolve(null); } });
+    req.on('end', () => { if (over) return; try { resolve(JSON.parse(b || '{}')); } catch { resolve({}); } });
     req.on('error', () => resolve({}));
   });
 }
 
-// Report without the replay frames — the report page does not need them.
-const lite = (aar) => { const { replay, ...rest } = aar; return rest; };
-const { buildReport } = require('./engine/aar');
-function getAar() {
-  if (game.aar) return game.aar;
-  if (game.status === 'LOBBY') return null;
-  return buildReport(game);   // mid-exercise: a provisional report, so the instructor can look early
+// Constant-time, and safe on secrets of different lengths (timingSafeEqual throws on those).
+function sameSecret(given, real) {
+  const a = Buffer.from(String(given == null ? '' : given)), b = Buffer.from(String(real == null ? '' : real));
+  return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// ---------------------------------------------------------------------------
-// AAR persistence + run index (for comparing two runs of the same mission)
-// ---------------------------------------------------------------------------
+function parseSeats(spec) {
+  if (!spec) return null;
+  const out = {};
+  for (const part of String(spec).split(',')) {
+    const [pid, code] = part.split(':').map((s) => s && s.trim());
+    if (PIDS.includes(pid) && /^\d{4}$/.test(code || '')) out[pid] = code;
+  }
+  return PIDS.every((p) => out[p]) ? out : null;
+}
+
 const safeId = (s) => /^[A-Za-z0-9._-]{1,120}$/.test(s) && !s.includes('..');
-
-function readIndex() {
-  try { return JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8')); } catch { return []; }
-}
-
-function saveAar(aar) {
-  try {
-    fs.mkdirSync(AAR_DIR, { recursive: true });
-    const id = `${aar.generatedAt.replace(/[:.]/g, '-')}-${aar.scenario.id}.json`;
-    const tmp1 = path.join(AAR_DIR, id + '.tmp');
-    fs.writeFileSync(tmp1, JSON.stringify(aar));
-    fs.renameSync(tmp1, path.join(AAR_DIR, id));
-    const idx = readIndex();
-    idx.unshift({
-      id, generatedAt: aar.generatedAt, scenario: aar.scenario.id, scenarioName: aar.scenario.name,
-      endReason: aar.endReason, durationMin: aar.durationMin,
-      fogMin: aar.costOfFog.reactionDelayMin, blindPct: aar.costOfFog.blindPct,
-      blindHp: aar.costOfFog.blindHp, wastedRounds: aar.costOfFog.wastedRounds,
-      phantomActions: aar.costOfFog.phantomActions, deceptionsSucceeded: aar.costOfFog.deceptionsSucceeded,
-      forgedOrdersObeyed: aar.costOfFog.forgedOrdersObeyed,
-      mcScore: aar.missionCommand.teamScore, copMeanPct: aar.team.copMeanPct,
-      objectiveHeld: aar.outcome.objectiveHeld, enemiesKilled: aar.outcome.enemiesKilled,
-      enemiesTotal: aar.outcome.enemiesTotal, friendlyAlive: aar.outcome.friendlyAlive,
-      redcell: aar.redcell.mode,
-    });
-    const tmp2 = INDEX_FILE + '.tmp';
-    fs.writeFileSync(tmp2, JSON.stringify(idx.slice(0, 200), null, 2));
-    fs.renameSync(tmp2, INDEX_FILE);
-    console.log('  AAR saved →', path.join('aar', id));
-  } catch (e) { console.error('  AAR save failed:', e.message); }
-}
-
-function loadRun(id) {
-  if (!safeId(id)) return null;
-  try { return JSON.parse(fs.readFileSync(path.join(AAR_DIR, id), 'utf8')); } catch { return null; }
-}
+const lite = (aar, instructor) => {
+  const { replay, ...rest } = aar;
+  if (!instructor) delete rest.profiles0;       // other people's records: the red cell's targeting data
+  return rest;
+};
 
 // ---------------------------------------------------------------------------
 // CSV export — one row per decision, then the event log
@@ -111,7 +84,7 @@ function aarCsv(aar) {
   const toMin = (t) => (t == null ? '' : Math.round((t * aar.timeScale / 60) * 10) / 10);
   const rows = [];
   rows.push(['FOGLINE AFTER ACTION REVIEW']);
-  rows.push(['Scenario', aar.scenario.name, 'Mission window', `${aar.startClock}-${aar.endClock}`, 'Ended', aar.endReason]);
+  rows.push(['Scenario', aar.scenario.name, 'Mission window', `${aar.startClock}-${aar.endClock}`, 'Ended', aar.endReason, 'Seed', aar.seedHex || '']);
   rows.push(['COST OF FOG']);
   rows.push(['Awareness delay vs clear comms (min)', aar.costOfFog.reactionDelayMin]);
   rows.push(['Threats never seen', aar.costOfFog.threatsNeverSeen]);
@@ -151,170 +124,283 @@ function aarCsv(aar) {
 }
 
 // ---------------------------------------------------------------------------
-// request handling
+// The app: one game, its clients, its routes. `node server.js` builds one and
+// listens; the tests build one on a spare port and drive it.
 // ---------------------------------------------------------------------------
-const server = http.createServer(async (req, res) => {
-  let url;
-  try { url = new URL(req.url, 'http://localhost'); } catch { res.writeHead(400); return res.end(); }
-  const p = url.pathname;
+function createApp(opts = {}) {
+  const aarDir = opts.aarDir || path.join(__dirname, 'aar');
+  const indexFile = path.join(aarDir, 'index.json');
+  const profiles = opts.profiles || new ProfileStore(path.join(aarDir, 'profiles.json'));
+  const token = opts.token || process.env.INSTRUCTOR_TOKEN || crypto.randomBytes(16).toString('hex');
+  const seats = opts.seats || parseSeats(process.env.SEAT_CODES)
+    || Object.fromEntries(PIDS.map((p) => [p, String(crypto.randomInt(1000, 10000))]));
+  const app = {
+    token, seats, profiles, aarDir,
+    game: opts.game || new Game(opts.scenario || 'CONTESTED', {}, { profiles }),
+    clients: new Set(),
+  };
+  let clientSeq = 0, wasEnded = false, timer = null;
 
-  // ---- event stream ----
-  if (p === '/events') {
-    const role = url.searchParams.get('role') === 'instructor' ? 'instructor' : 'trainee';
-    const pid = url.searchParams.get('pid');
-    if (role === 'instructor' && url.searchParams.get('token') !== INSTRUCTOR_TOKEN) return json(res, 401, { error: 'instructor token required' });
-    if (role === 'trainee' && !PIDS.includes(pid)) return json(res, 400, { error: 'unknown callsign' });
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    res.write('retry: 1000\n\n');
-    const client = { res, role, pid, id: ++clientSeq };
-    clients.add(client);
-    if (role === 'trainee') sse(res, 'history', game.inbox[pid].slice(-80));
-    else sse(res, 'history', { events: game.events.slice(-120), decisions: game.decisions.slice(-120) });
-    req.on('close', () => clients.delete(client));
-    req.on('error', () => clients.delete(client));
-    return;
-  }
+  const isInstructor = (req, url, body) => sameSecret(
+    url.searchParams.get('token') || req.headers['x-fogline-token'] || (body && body.token), token);
+  const seatOk = (pid, seat) => PIDS.includes(pid) && sameSecret(seat, seats[pid]);
+  const live = () => app.game.status === 'RUNNING' || app.game.status === 'PAUSED';
 
-  // ---- trainee + instructor actions ----
-  if (p === '/api/action' && req.method === 'POST') {
-    const b = await readBody(req);
-    try { return json(res, 200, game.action(b.pid, b)); } catch (e) { console.error('action error:', e.stack); return json(res, 500, { error: 'internal error' }); }
-  }
-  if (p === '/api/admin' && req.method === 'POST') {
-    const b = await readBody(req);
-    if (b.token !== INSTRUCTOR_TOKEN) return json(res, 401, { error: 'instructor token required' });
-    if (b.type === 'reset' && (game.status === 'RUNNING' || game.status === 'PAUSED')) return json(res, 400, { error: 'End the exercise before resetting' });
-    try { return json(res, 200, game.admin(b)); } catch (e) { console.error('admin error:', e.stack); return json(res, 500, { error: 'internal error' }); }
+  function getAar() {
+    const g = app.game;
+    if (g.aar) return g.aar;
+    if (g.status === 'LOBBY') return null;
+    return buildReport(g);   // mid-exercise: a provisional report, so the instructor can look early
   }
 
-  // ---- current exercise data ----
-  if (p === '/api/scenarios') {
-    return json(res, 200, { scenarios: SCENARIOS.map((s) => ({ id: s.id, name: s.name, brief: s.brief })), current: game.scenario.id, config: game.cfg });
+  function readIndex() {
+    try { return JSON.parse(fs.readFileSync(indexFile, 'utf8')); } catch { return []; }
   }
-  if (p === '/api/aar') {
-    const a = getAar();
-    if (!a) return json(res, 404, { error: 'No exercise data yet — run an exercise first.' });
-    return json(res, 200, lite(a));
+  function writeAtomic(file, text) {
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
   }
-  if (p === '/api/replay') {
-    const id = url.searchParams.get('run');
-    if (id) {
+  function saveAar(aar) {
+    try {
+      fs.mkdirSync(aarDir, { recursive: true });
+      const id = `${aar.generatedAt.replace(/[:.]/g, '-')}-${aar.scenario.id}.json`;
+      writeAtomic(path.join(aarDir, id), JSON.stringify(aar));
+      const idx = readIndex();
+      idx.unshift({
+        id, generatedAt: aar.generatedAt, scenario: aar.scenario.id, scenarioName: aar.scenario.name,
+        seed: aar.seed, seedHex: aar.seedHex, cfg0: aar.cfg0,
+        endReason: aar.endReason, durationMin: aar.durationMin,
+        fogMin: aar.costOfFog.reactionDelayMin, blindPct: aar.costOfFog.blindPct,
+        blindHp: aar.costOfFog.blindHp, wastedRounds: aar.costOfFog.wastedRounds,
+        phantomActions: aar.costOfFog.phantomActions, deceptionsSucceeded: aar.costOfFog.deceptionsSucceeded,
+        forgedOrdersObeyed: aar.costOfFog.forgedOrdersObeyed,
+        mcScore: aar.missionCommand.teamScore, copMeanPct: aar.team.copMeanPct,
+        objectiveHeld: aar.outcome.objectiveHeld, enemiesKilled: aar.outcome.enemiesKilled,
+        enemiesTotal: aar.outcome.enemiesTotal, friendlyAlive: aar.outcome.friendlyAlive,
+        redcell: aar.redcell.mode, names: Object.values(aar.players).map((P) => P.judgement && P.judgement.who),
+      });
+      writeAtomic(indexFile, JSON.stringify(idx.slice(0, 200), null, 2));
+      if (!opts.quiet) console.log('  AAR saved →', path.join(path.basename(aarDir), id));
+      return id;
+    } catch (e) { console.error('  AAR save failed:', e.message); return null; }
+  }
+  function loadRun(id) {
+    if (!safeId(id)) return null;
+    try { return JSON.parse(fs.readFileSync(path.join(aarDir, id), 'utf8')); } catch { return null; }
+  }
+  app.loadRun = loadRun;
+  app.readIndex = readIndex;
+
+  async function handle(req, res) {
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); } catch { res.writeHead(400); return res.end(); }
+    const p = url.pathname;
+    const game = app.game;
+
+    // ---- event stream ----
+    if (p === '/events') {
+      const role = url.searchParams.get('role') === 'instructor' ? 'instructor' : 'trainee';
+      const pid = url.searchParams.get('pid');
+      if (role === 'instructor' && !isInstructor(req, url)) return json(res, 401, { error: 'instructor token required' });
+      if (role === 'trainee' && !PIDS.includes(pid)) return json(res, 400, { error: 'unknown callsign' });
+      if (role === 'trainee' && !seatOk(pid, url.searchParams.get('seat')) && !isInstructor(req, url)) {
+        return json(res, 401, { error: 'seat code required' });
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      res.write('retry: 1000\n\n');
+      const client = { res, role, pid, id: ++clientSeq };
+      app.clients.add(client);
+      if (role === 'trainee') sse(res, 'history', game.inbox[pid].slice(-80));
+      else sse(res, 'history', { events: game.events.slice(-120), decisions: game.decisions.slice(-120) });
+      req.on('close', () => app.clients.delete(client));
+      req.on('error', () => app.clients.delete(client));
+      return;
+    }
+
+    // ---- trainee + instructor actions ----
+    if (p === '/api/action' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (!b) return json(res, 413, { error: 'too large' });
+      const { token: _t, seat, ...a } = b;           // credentials stop here: they never reach the log
+      if (!seatOk(a.pid, seat) && !isInstructor(req, url, b)) return json(res, 401, { error: 'seat code required' });
+      try { return json(res, 200, game.traineeResult(game.action(a.pid, a))); }
+      catch (e) { console.error('action error:', e.stack); return json(res, 500, { error: 'internal error' }); }
+    }
+    if (p === '/api/admin' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (!b) return json(res, 413, { error: 'too large' });
+      if (!isInstructor(req, url, b)) return json(res, 401, { error: 'instructor token required' });
+      const { token: _t, seat: _s, ...a } = b;
+      if (a.type === 'reset' && live()) return json(res, 400, { error: 'End the exercise before resetting' });
+      try { return json(res, 200, game.admin(a)); }
+      catch (e) { console.error('admin error:', e.stack); return json(res, 500, { error: 'internal error' }); }
+    }
+
+    // ---- exercise data: the truth, so the instructor's alone while it runs ----
+    const truthRoute = ['/api/aar', '/api/aar.json', '/api/aar.csv', '/api/replay', '/api/runs', '/api/compare'].includes(p) || p.startsWith('/api/run/');
+    const instructor = isInstructor(req, url);
+    if (truthRoute && live() && !instructor) return json(res, 401, { error: 'the exercise is running — this opens at ENDEX' });
+
+    if (p === '/api/scenarios') {
+      const out = { scenarios: SCENARIOS.map((s) => ({ id: s.id, name: s.name, brief: s.brief })), current: game.scenario.id };
+      if (instructor) out.config = game.cfg;
+      return json(res, 200, out);
+    }
+    if (p === '/api/aar') {
+      const a = getAar();
+      if (!a) return json(res, 404, { error: 'No exercise data yet — run an exercise first.' });
+      return json(res, 200, lite(a, instructor));
+    }
+    if (p === '/api/replay') {
+      const id = url.searchParams.get('run');
+      if (id) {
+        const run = loadRun(id);
+        if (!run || !run.replay) return json(res, 404, { error: 'run not found' });
+        return json(res, 200, { replay: run.replay, aar: lite(run, instructor) });
+      }
+      const a = getAar();
+      if (!a) return json(res, 404, { error: 'No exercise data yet' });
+      return json(res, 200, { replay: a.replay, aar: lite(a, instructor) });
+    }
+    if (p === '/api/aar.json') {
+      const a = getAar();
+      if (!a) return json(res, 404, { error: 'No exercise data yet' });
+      return download(res, `fogline-aar-${a.scenario.id}.json`, 'application/json', JSON.stringify(lite(a, instructor), null, 2));
+    }
+    if (p === '/api/aar.csv') {
+      const a = getAar();
+      if (!a) return json(res, 404, { error: 'No exercise data yet' });
+      return download(res, `fogline-aar-${a.scenario.id}.csv`, 'text/csv; charset=utf-8', '﻿' + aarCsv(a));
+    }
+
+    // ---- saved runs, and comparing two of them ----
+    if (p === '/api/runs') return json(res, 200, { runs: readIndex() });
+    if (p.startsWith('/api/run/')) {
+      let id;
+      try { id = decodeURIComponent(p.slice('/api/run/'.length)); } catch { return json(res, 400, { error: 'bad run id' }); }
       const run = loadRun(id);
-      if (!run || !run.replay) return json(res, 404, { error: 'run not found' });
-      return json(res, 200, { replay: run.replay, aar: lite(run) });
+      if (!run) return json(res, 404, { error: 'run not found' });
+      if (url.searchParams.get('csv')) return download(res, `fogline-${id}.csv`, 'text/csv; charset=utf-8', '﻿' + aarCsv(run));
+      return json(res, 200, lite(run, instructor));
     }
-    const a = getAar();
-    if (!a) return json(res, 404, { error: 'No exercise data yet' });
-    return json(res, 200, { replay: a.replay, aar: lite(a) });
-  }
-  if (p === '/api/aar.json') {
-    const a = getAar();
-    if (!a) return json(res, 404, { error: 'No exercise data yet' });
-    return download(res, `fogline-aar-${a.scenario.id}.json`, 'application/json', JSON.stringify(a, null, 2));
-  }
-  if (p === '/api/aar.csv') {
-    const a = getAar();
-    if (!a) return json(res, 404, { error: 'No exercise data yet' });
-    return download(res, `fogline-aar-${a.scenario.id}.csv`, 'text/csv; charset=utf-8', '﻿' + aarCsv(a));
-  }
+    if (p === '/api/compare') {
+      const A = url.searchParams.get('a') === 'current' ? getAar() : loadRun(url.searchParams.get('a'));
+      const B = url.searchParams.get('b') === 'current' ? getAar() : loadRun(url.searchParams.get('b'));
+      if (!A || !B) return json(res, 404, { error: 'need two runs to compare' });
+      const pick = (x) => ({
+        label: x.scenario.name, id: x.scenario.id, generatedAt: x.generatedAt, durationMin: x.durationMin,
+        redcell: x.redcell.mode, costOfFog: x.costOfFog, outcome: x.outcome, seedHex: x.seedHex || null,
+        mcScore: x.missionCommand.teamScore, team: { copMeanPct: x.team.copMeanPct, copWorstPct: x.team.copWorstPct, fratricide: x.team.fratricide, mutualSupport: x.team.mutualSupport },
+        players: Object.fromEntries(Object.entries(x.players).map(([k, P]) => [k, {
+          hp: P.hp, meanAccuracy: P.meanAccuracy, fogMin: P.fogMin, blindHpLost: P.blindHpLost,
+          meanLatencyMin: P.meanLatencyMin, mcScore: P.missionCommand.score, jammedMin: P.ew.jammedMin,
+        }])),
+      });
+      return json(res, 200, { a: pick(A), b: pick(B), comparable: A.scenario.id === B.scenario.id });
+    }
 
-  // ---- saved runs, and comparing two of them ----
-  if (p === '/api/runs') return json(res, 200, { runs: readIndex() });
-  if (p.startsWith('/api/run/')) {
-    const id = decodeURIComponent(p.slice('/api/run/'.length));
-    const run = loadRun(id);
-    if (!run) return json(res, 404, { error: 'run not found' });
-    if (url.searchParams.get('csv')) return download(res, `fogline-${id}.csv`, 'text/csv; charset=utf-8', '﻿' + aarCsv(run));
-    return json(res, 200, lite(run));
-  }
-  if (p === '/api/compare') {
-    const A = url.searchParams.get('a') === 'current' ? getAar() : loadRun(url.searchParams.get('a'));
-    const B = url.searchParams.get('b') === 'current' ? getAar() : loadRun(url.searchParams.get('b'));
-    if (!A || !B) return json(res, 404, { error: 'need two runs to compare' });
-    const pick = (x) => ({
-      label: x.scenario.name, id: x.scenario.id, generatedAt: x.generatedAt, durationMin: x.durationMin,
-      redcell: x.redcell.mode, costOfFog: x.costOfFog, outcome: x.outcome,
-      mcScore: x.missionCommand.teamScore, team: { copMeanPct: x.team.copMeanPct, copWorstPct: x.team.copWorstPct, fratricide: x.team.fratricide, mutualSupport: x.team.mutualSupport },
-      players: Object.fromEntries(Object.entries(x.players).map(([k, P]) => [k, {
-        hp: P.hp, meanAccuracy: P.meanAccuracy, fogMin: P.fogMin, blindHpLost: P.blindHpLost,
-        meanLatencyMin: P.meanLatencyMin, mcScore: P.missionCommand.score, jammedMin: P.ew.jammedMin,
-      }])),
+    if (p === '/api/profiles') {
+      if (!instructor) return json(res, 401, { error: 'instructor token required' });
+      return json(res, 200, { profiles: profiles.list() });
+    }
+
+    if (p === '/api/clients') {
+      const online = {};
+      for (const c of app.clients) if (c.role === 'trainee') online[c.pid] = (online[c.pid] || 0) + 1;
+      return json(res, 200, { online, instructors: [...app.clients].filter((c) => c.role === 'instructor').length });
+    }
+
+    // ---- static ----
+    const rel = PAGES[p] || p.replace(/^\/+/, '');
+    const file = path.resolve(PUBLIC, rel);
+    if (!file.startsWith(PUBLIC + path.sep) && file !== PUBLIC) { res.writeHead(403); return res.end('Forbidden'); }
+    fs.readFile(file, (err, data) => {
+      if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+      res.end(data);
     });
-    return json(res, 200, { a: pick(A), b: pick(B), comparable: A.scenario.id === B.scenario.id });
   }
 
-  if (p === '/api/profiles') return json(res, 200, { profiles: profiles.list() });
-
-  if (p === '/api/clients') {
-    const online = {};
-    for (const c of clients) if (c.role === 'trainee') online[c.pid] = (online[c.pid] || 0) + 1;
-    return json(res, 200, { online, instructors: [...clients].filter((c) => c.role === 'instructor').length });
-  }
-
-  // ---- static ----
-  const rel = PAGES[p] || p.replace(/^\/+/, '');
-  const file = path.resolve(PUBLIC, rel);
-  if (!file.startsWith(PUBLIC + path.sep) && file !== PUBLIC) { res.writeHead(403); return res.end('Forbidden'); }
-  fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    res.end(data);
+  app.server = http.createServer((req, res) => {
+    handle(req, res).catch((e) => {
+      console.error('request failed:', e && e.stack);
+      if (!res.headersSent) json(res, 500, { error: 'internal error' });
+      else try { res.end(); } catch { /* gone */ }
+    });
   });
-});
 
-// ---------------------------------------------------------------------------
-// simulation loop + push
-// ---------------------------------------------------------------------------
-let wasEnded = false;
-setInterval(() => {
-  try { game.tick(TICK_MS / 1000); } catch (e) { console.error('tick failed:', e.stack); }
+  // ---- simulation loop + push ----
+  app.tick = function tick() {
+    const game = app.game;
+    try { game.tick(TICK_MS / 1000); } catch (e) { console.error('tick failed:', e.stack); }
 
-  if (game.status === 'ENDED' && !wasEnded && game.aar) saveAar(game.aar);
-  wasEnded = game.status === 'ENDED';
+    if (game.status === 'ENDED' && !wasEnded && game.aar) app.lastSaved = saveAar(game.aar);
+    wasEnded = game.status === 'ENDED';
 
-  // queued one-off events first
-  const out = game.outbox;
-  game.outbox = [];
-  for (const o of out) {
-    for (const c of clients) {
-      const match = o.to === 'all'
-        || (o.to === 'instructor' && c.role === 'instructor')
-        || (c.role === 'trainee' && c.pid === o.to);
-      if (match) sse(c.res, o.event, o.data);
+    // queued one-off events first
+    const out = game.outbox;
+    game.outbox = [];
+    for (const o of out) {
+      for (const c of app.clients) {
+        const match = o.to === 'all'
+          || (o.to === 'instructor' && c.role === 'instructor')
+          || (c.role === 'trainee' && c.pid === o.to);
+        if (match) sse(c.res, o.event, o.data);
+      }
     }
-  }
 
-  // then one state snapshot per distinct viewer
-  let iv = null;
-  const tv = {};
-  const seats = {};
-  for (const c of clients) if (c.role === 'trainee') seats[c.pid] = (seats[c.pid] || 0) + 1;
-  for (const c of clients) {
-    if (c.role === 'instructor') {
-      if (!iv) { iv = game.instructorView(); iv.seats = seats; iv.online = seats; }
-      sse(c.res, 'state', iv);
-    } else {
-      if (!tv[c.pid]) { tv[c.pid] = game.traineeView(c.pid); tv[c.pid].seats = seats; }
-      sse(c.res, 'state', tv[c.pid]);
+    // then one state snapshot per distinct viewer
+    let iv = null;
+    const tv = {};
+    const seated = {};
+    for (const c of app.clients) if (c.role === 'trainee') seated[c.pid] = (seated[c.pid] || 0) + 1;
+    for (const c of app.clients) {
+      if (c.role === 'instructor') {
+        if (!iv) { iv = game.instructorView(); iv.seats = seated; iv.online = seated; }
+        sse(c.res, 'state', iv);
+      } else {
+        if (!tv[c.pid]) { tv[c.pid] = game.traineeView(c.pid); tv[c.pid].seats = seated; }
+        sse(c.res, 'state', tv[c.pid]);
+      }
     }
-  }
-}, TICK_MS);
+  };
+  // a different game in the same seat (restart from a moment): every screen reloads onto it
+  app.swap = function swap(g) {
+    app.game = g;
+    wasEnded = g.status === 'ENDED';
+    for (const c of app.clients) sse(c.res, 'reload', { reason: 'restarted' });
+  };
+  app.start = () => { if (!timer) timer = setInterval(app.tick, TICK_MS); return app; };
+  app.stop = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+    for (const c of app.clients) { try { c.res.end(); } catch { /* gone */ } }
+    app.clients.clear();
+  };
+  app.saveAar = saveAar;
+  return app;
+}
 
-// ---------------------------------------------------------------------------
-server.listen(PORT, '0.0.0.0', () => {
-  const ips = Object.values(os.networkInterfaces()).flat()
-    .filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
-  const host = ips[0] || 'localhost';
-  const line = (l, u) => console.log(`    ${l.padEnd(12)} ${u}`);
-  console.log('\n  \x1b[32mFOGLINE\x1b[0m — decision trainer for degraded communications');
-  console.log(`  instructor token: \x1b[33m${INSTRUCTOR_TOKEN}\x1b[0m`);
-  console.log(`  scenario: ${game.scenario.name}\n`);
-  line('INSTRUCTOR', `http://${host}:${PORT}/instructor?token=${INSTRUCTOR_TOKEN}`);
-  for (const pid of PIDS) line(pid, `http://${host}:${PORT}/trainee?pid=${pid}`);
-  line('REPLAY', `http://${host}:${PORT}/replay`);
-  line('REPORT', `http://${host}:${PORT}/report`);
-  if (ips.length > 1) console.log(`\n  other addresses: ${ips.slice(1).join(', ')}`);
-  console.log(`\n  localhost: http://localhost:${PORT}\n`);
-});
+module.exports = { createApp, aarCsv, sameSecret, parseSeats };
 
-process.on('SIGINT', () => { console.log('\n  stopping\n'); process.exit(0); });
+if (require.main === module) {
+  const app = createApp().start();
+  app.server.listen(PORT, '0.0.0.0', () => {
+    const ips = Object.values(os.networkInterfaces()).flat()
+      .filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
+    const host = ips[0] || 'localhost';
+    const line = (l, u) => console.log(`    ${l.padEnd(12)} ${u}`);
+    console.log('\n  \x1b[32mFOGLINE\x1b[0m — decision trainer for degraded communications');
+    console.log(`  instructor token: \x1b[33m${app.token}\x1b[0m`);
+    console.log(`  seat codes:       ${PIDS.map((p) => `${p} \x1b[33m${app.seats[p]}\x1b[0m`).join('   ')}`);
+    console.log(`  scenario: ${app.game.scenario.name}\n`);
+    line('INSTRUCTOR', `http://${host}:${PORT}/instructor?token=${app.token}`);
+    for (const pid of PIDS) line(pid, `http://${host}:${PORT}/trainee?pid=${pid}&seat=${app.seats[pid]}`);
+    line('REPLAY', `http://${host}:${PORT}/replay`);
+    line('REPORT', `http://${host}:${PORT}/report`);
+    if (ips.length > 1) console.log(`\n  other addresses: ${ips.slice(1).join(', ')}`);
+    console.log(`\n  localhost: http://localhost:${PORT}\n`);
+  });
+  process.on('SIGINT', () => { console.log('\n  stopping\n'); process.exit(0); });
+}

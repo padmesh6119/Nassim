@@ -148,7 +148,7 @@ function claimText(source, says, grid, sector, type = 'ARMOR') {
 // Where to stage a contradiction. A "present" truth needs a real enemy the
 // commander cannot already see; an "absent" truth needs empty ground on the
 // enemy's side of them. Returns null when the ground cannot support it.
-function placeFor(sim, pid, truth, rand = Math.random) {
+function placeFor(sim, pid, truth, rand) {
   const u = sim.unit(pid);
   if (!u || !u.alive) return null;
   const range = sim.cfg.sensorRange;

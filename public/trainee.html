@@ -14,21 +14,21 @@
   /* the order form sits on paper, directly under the sheet */
   .orderform { flex: none; background: var(--paper); padding: 10px 14px; display: flex; flex-direction: column; gap: 9px; }
   .formrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .formrow .lbl { font-family: var(--narrow); font-size: 11.5px; letter-spacing: .09em; color: var(--ink-3); width: 54px; flex: none; }
+  .formrow .lbl { font-family: var(--narrow); font-size: var(--t-small); letter-spacing: .09em; color: var(--ink-3); width: 54px; flex: none; }
   .formrow input[type=text] { flex: 1; min-width: 160px; }
   .why { display: flex; gap: 4px; flex-wrap: wrap; }
-  .why button { font-family: var(--sans); font-size: 12px; padding: 3px 9px; border: 1px solid var(--rule-2); background: none; color: var(--ink-2); }
+  .why button { font-family: var(--sans); font-size: var(--t-small); padding: 3px 9px; border: 1px solid var(--rule-2); background: none; color: var(--ink-2); }
   .why button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
-  .task { padding: 11px 13px; font-size: 13.5px; line-height: 1.55; }
-  .task .mytask { font-size: 15px; margin-bottom: 7px; }
+  .task { padding: 11px 13px; font-size: var(--t-small); line-height: 1.55; }
+  .task .mytask { font-size: var(--t-body); margin-bottom: 7px; }
   .task .mytask b { font-family: var(--narrow); letter-spacing: .03em; }
-  .task .intent { color: var(--ink-2); font-size: 12.5px; border-top: 1px solid var(--rule); padding-top: 7px; margin-top: 7px; }
+  .task .intent { color: var(--ink-2); font-size: var(--t-small); border-top: 1px solid var(--rule); padding-top: 7px; margin-top: 7px; }
   .task .mytask { margin-bottom: 4px; }
-  .intentbtn { font-family: var(--narrow); font-size: 12px; letter-spacing: .04em; background: none; border: 1px solid var(--rule-2); color: var(--ink-2); padding: 2px 9px; margin-top: 4px; }
+  .intentbtn { font-family: var(--narrow); font-size: var(--t-small); letter-spacing: .04em; background: none; border: 1px solid var(--rule-2); color: var(--ink-2); padding: 2px 9px; margin-top: 4px; }
   .intentbtn:hover { background: var(--paper-2); }
 
-  .gps { font-family: var(--narrow); font-size: 12px; letter-spacing: .05em; padding: 2px 8px; border: 1px solid #55524a; color: #9a9281; }
+  .gps { font-family: var(--narrow); font-size: var(--t-small); letter-spacing: .05em; padding: 2px 8px; border: 1px solid #55524a; color: #9a9281; }
   .gps.bad { color: #c3a6e8; border-color: var(--violet); }
   .hp { font-family: var(--mono); font-weight: 600; transition: color .2s; }
   .hp.hit { animation: hit .7s ease-out; }
@@ -43,7 +43,7 @@
     box-shadow: 0 6px 18px rgba(0,0,0,.35);
   }
   .contactbar.on { display: flex; animation: pulse 1.6s ease-in-out infinite; }
-  .contactbar small { font-family: var(--sans); font-size: 13px; letter-spacing: 0; opacity: .9; }
+  .contactbar small { font-family: var(--sans); font-size: var(--t-small); letter-spacing: 0; opacity: .9; }
   @keyframes pulse { 50% { background: #8f1a20; } }
   @media (prefers-reduced-motion: reduce) { .contactbar.on, .hp.hit { animation: none; } }
 
@@ -55,7 +55,7 @@
   }
   .downbar.on { display: flex; }
   .downbar b { font-family: var(--narrow); font-size: 19px; letter-spacing: .05em; }
-  .downbar span { font-size: 13px; opacity: .85; }
+  .downbar span { font-size: var(--t-small); opacity: .85; }
   .orderform.dead { opacity: .35; pointer-events: none; }
   .track.fresh { animation: fresh 2.4s ease-out; }
   @keyframes fresh { 0% { background: rgba(184,35,43,.22); } 100% { background: transparent; } }
@@ -91,11 +91,11 @@
         <button class="btn go" data-mode="uav">UAV sweep <span class="quiet">U</span></button>
         <button class="btn" id="holdBtn">Hold and defend <span class="quiet">H</span></button>
         <button class="btn deceive" id="authBtn" title="Challenge the last order from HQ over the net">Authenticate order <span class="quiet">A</span></button>
-        <span class="quiet" id="refHint" style="font-size:12.5px"></span>
+        <span class="quiet" id="refHint" style="font-size: var(--t-small)"></span>
       </div>
       <div class="formrow" id="pendingRow" style="display:none">
         <span class="lbl">In the air</span>
-        <span id="pending" style="font-size:12.5px"></span>
+        <span id="pending" style="font-size: var(--t-small)"></span>
       </div>
       <div class="formrow">
         <span class="lbl">Reason</span>

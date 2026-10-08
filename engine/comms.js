@@ -5,21 +5,20 @@
 // That difference is what the AAR later prices as the "cost of fog".
 
 const BASE_LATENCY = 0.3; // seconds, even on a perfect net
-const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const TYPE_CONFUSION = { ARMOR: 'MECH INF', 'MECH INF': 'ARMOR', INFANTRY: 'MECH INF', RECON: 'INFANTRY' };
 
 // A broken radio does not politely corrupt one character at a time: words drop
 // out whole, and the operator asks for a repeat.
-function garbleText(s) {
+function garbleText(s, rng) {
   const words = String(s).split(' ').map((w) => {
-    const r = Math.random();
+    const r = rng();
     if (r < 0.12) return '###';
-    if (r < 0.45) return w.replace(/[A-Z0-9]/g, (ch) => (Math.random() < 0.4 ? '#' : ch));
+    if (r < 0.45) return w.replace(/[A-Z0-9]/g, (ch) => (rng() < 0.4 ? '#' : ch));
     return w;
   });
-  if (Math.random() < 0.35) words.push('…SAY AGAIN');
+  if (rng() < 0.35) words.push('…SAY AGAIN');
   return words.join(' ');
 }
 
@@ -42,8 +41,11 @@ class AwarenessLedger {
 
 class CommsNet {
   // linkProfile(pid) → { sevDelay, sevDrop, sevGarble, severity, sources:[] }
-  constructor(cfg, { linkProfile, onDeliver, onDrop }) {
+  // rng: the exercise's seeded generator — the net draws every delay, loss and garble from it.
+  constructor(cfg, { linkProfile, onDeliver, onDrop, rng }) {
+    if (typeof rng !== 'function') throw new Error('CommsNet needs a seeded rng');
     this.cfg = cfg;
+    this.rng = rng;
     this.linkProfile = linkProfile;
     this.onDeliver = onDeliver;
     this.onDrop = onDrop || (() => {});
@@ -82,10 +84,12 @@ class CommsNet {
   // msg: { kind, from, text, contacts?, pos?, clearArea?, kill?, order?, meta? }
   send(to, msg, fromPid = null) {
     const c = this.cfg;
+    const rng = this.rng;
+    const rand = (a, b) => a + rng() * (b - a);
     const prof = this.profileFor(to, fromPid);
     const delayAdd = prof.sevDelay > 0 ? (c.delayMin + (c.delayMax - c.delayMin) * prof.sevDelay) * rand(0.7, 1.15) : 0;
-    const dropped = Math.random() < prof.sevDrop * c.dropRate;
-    const garbled = !dropped && Math.random() < prof.sevGarble * c.garbleRate;
+    const dropped = rng() < prof.sevDrop * c.dropRate;
+    const garbled = !dropped && rng() < prof.sevGarble * c.garbleRate;
 
     const d = {
       id: ++this.seq, to, from: msg.from, kind: msg.kind,
@@ -100,17 +104,17 @@ class CommsNet {
     };
 
     if (garbled) {
-      d.text = garbleText(d.text);
+      d.text = garbleText(d.text, rng);
       if (d.contacts) for (const k of d.contacts) {
-        if (Math.random() < 0.7) { // position drifts — this is what "conflicting reports" feels like
+        if (rng() < 0.7) { // position drifts — this is what "conflicting reports" feels like
           const a = rand(0, Math.PI * 2), r = rand(60, 150);
           k.x = clamp(k.x + Math.cos(a) * r, 5, 995);
           k.y = clamp(k.y + Math.sin(a) * r, 5, 635);
           k.garbled = true;
         }
-        if (Math.random() < 0.25 && TYPE_CONFUSION[k.type]) { k.type = TYPE_CONFUSION[k.type]; k.garbled = true; }
+        if (rng() < 0.25 && TYPE_CONFUSION[k.type]) { k.type = TYPE_CONFUSION[k.type]; k.garbled = true; }
       }
-      if (d.pos && Math.random() < 0.6) { // a garbled position report puts a friendly in the wrong place
+      if (d.pos && rng() < 0.6) { // a garbled position report puts a friendly in the wrong place
         d.pos = { x: clamp(d.pos.x + rand(-90, 90), 5, 995), y: clamp(d.pos.y + rand(-90, 90), 5, 635) };
         d.posGarbled = true;
       }

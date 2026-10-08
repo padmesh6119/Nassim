@@ -46,12 +46,13 @@ class EwField {
   spoofAt(pos) { return this.sample(pos, 'SPOOFER'); }
 
   // What a trainee is allowed to know: a coarse direction-finding cut, not the
-  // emitter's exact location.
-  dfCut(pos) {
+  // emitter's exact location. u01 is a [0,1) draw from the caller — view noise,
+  // never the exercise's own stream.
+  dfCut(pos, u01) {
     const s = this.jamAt(pos);
     if (!s.emitter || s.severity < 0.25) return null;
     const spread = 30 - 18 * s.severity; // stronger signal → tighter bearing
-    const jitter = (Math.random() - 0.5) * spread;
+    const jitter = (u01 - 0.5) * spread;
     const bearing = (s.bearing + jitter + 360) % 360;
     return { bearing: Math.round(bearing), spread: Math.round(spread), name: T.bearingName(bearing), severity: s.severity, masked: s.masked };
   }

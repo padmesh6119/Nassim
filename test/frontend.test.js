@@ -12,6 +12,11 @@ const vm = require('vm');
 const T = require('../public/terrain.js');
 const { Game } = require('../engine/sim');
 
+// One fixed seed for the exercise these contracts are checked against; fuzz mode draws one.
+const FUZZ = process.env.FOGLINE_FUZZ === '1';
+const SEED = FUZZ ? require('crypto').randomBytes(4).readUInt32BE(0) : 4242;
+if (FUZZ) console.log(`frontend contracts on seed ${SEED}`);
+
 let pass = 0, fail = 0;
 const results = [];
 function test(name, fn) {
@@ -33,7 +38,7 @@ const has = (obj, pathStr, label) => {
 // A real exercise to render: jam one commander, deceive another, forge an order.
 // ---------------------------------------------------------------------------
 function buildExercise() {
-  const g = new Game('DECEPTION', { duration: 90, redcell: 'AUTO', redcellBudget: 8 });
+  const g = new Game('DECEPTION', { duration: 90, redcell: 'AUTO', redcellBudget: 8 }, { seed: SEED });
   g.admin({ type: 'start' });
   const step = (sec) => { for (let i = 0; i < sec * 5; i++) g.tick(0.2); };
   step(10);
@@ -59,7 +64,7 @@ function buildExercise() {
 }
 
 const run = (g, seconds, dt = 0.2) => { for (let i = 0; i < Math.round(seconds / dt); i++) g.tick(dt); };
-const start = (scenario = 'BASELINE', cfg = {}) => { const g = new Game(scenario, cfg); g.admin({ type: 'start' }); return g; };
+const start = (scenario = 'BASELINE', cfg = {}) => { const g = new Game(scenario, cfg, { seed: SEED }); g.admin({ type: 'start' }); return g; };
 const clearAll = (g) => g.pids.forEach((p) => g.admin({ type: 'link', pid: p, mode: 'clear' }));
 
 const game = buildExercise();
@@ -362,6 +367,77 @@ test('trainee view exposes every field the commander screen reads', () => {
         ok(fs.existsSync(path.join(pub, ref)), `${page} references missing file /${ref}`);
       }
     }
+  });
+
+  // --- the screens are read from the back of a room, off a washed-out projector ---
+  const styleFiles = () => {
+    const pub = path.join(__dirname, '..', 'public');
+    return ['style.css', 'index.html', 'trainee.html', 'instructor.html', 'report.html', 'replay.html']
+      .map((f) => [f, fs.readFileSync(path.join(pub, f), 'utf8')]);
+  };
+
+  test('nothing on any screen is set smaller than the 13px floor', () => {
+    const bad = [];
+    for (const [name, src] of styleFiles()) {
+      for (const m of src.matchAll(/font-size: *([0-9.]+)px/g)) {
+        if (parseFloat(m[1]) < 13) bad.push(`${name}: ${m[0]}`);
+      }
+    }
+    eq(bad.length, 0, 'below the floor — ' + bad.join(', '));
+  });
+
+  test('no rounded corners anywhere: this is staff paper, not a web app', () => {
+    const bad = [];
+    for (const [name, src] of styleFiles()) {
+      for (const m of src.matchAll(/border-radius: *([^;}]+)/g)) {
+        // a 50% circle is a map symbol, a dot; any other radius is a rounded box
+        const v = m[1].trim();
+        if (!/^0(px|%)?$/.test(v) && v !== '50%') bad.push(`${name}: ${m[0].trim()}`);
+      }
+    }
+    eq(bad.length, 0, 'rounded corner — ' + bad.join(', '));
+  });
+
+  test('every ink on every paper clears the contrast a projector needs', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    const tok = (n) => {
+      const m = css.match(new RegExp(`--${n}: *(#[0-9a-f]{6})`, 'i'));
+      ok(m, `--${n} is not defined`);
+      return m[1];
+    };
+    const lum = (h) => {
+      const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+        .map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+    const papers = ['paper', 'paper-2', 'collar'].map(tok);
+    for (const ink of ['ink', 'ink-2', 'ink-3', 'blue', 'red', 'ochre', 'green', 'violet']) {
+      for (const paper of papers) {
+        const r = ratio(tok(ink), paper);
+        ok(r >= 4.5, `--${ink} on ${paper} is ${r.toFixed(2)}:1, under 4.5:1`);
+      }
+    }
+    // the rail, the desks and the curtain are dark: the paper inks vanish there
+    for (const ink of ['on-board', 'on-board-2', 'on-board-hi']) {
+      for (const board of ['board', 'board-2'].map(tok)) {
+        const r = ratio(tok(ink), board);
+        ok(r >= 4.5, `--${ink} on ${board} is ${r.toFixed(2)}:1, under 4.5:1`);
+      }
+    }
+  });
+
+  test('a paper ink is never used on a dark surface', () => {
+    const DARK = /^\s*(\.rail\b|\.state\b|\.curtain\b|\.seats\b|\.whoami\b|\.desk\b|\.nums\b|\.ewstrip\b|\.fogread\b|\.viewtabs\b|\.btn\b|#settings\b)/;
+    const bad = [];
+    for (const [name, src] of styleFiles()) {
+      for (const m of src.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        if (!DARK.test(m[1])) continue;
+        const ink = m[2].match(/(?:^|[;{\s])color: *var\(--(ink|ink-2|ink-3|red|green|ochre|blue|violet)\)/);
+        if (ink) bad.push(`${name}: ${m[1].trim()} uses --${ink[1]}`);
+      }
+    }
+    eq(bad.length, 0, 'unreadable on the board — ' + bad.join(', '));
   });
 
   // -------------------------------------------------------------------------

@@ -10,24 +10,24 @@ const { EwField } = require('../engine/ew');
 const { CommsNet } = require('../engine/comms');
 const { Game } = require('../engine/sim');
 
+const { mulberry32, seedFrom } = require('../engine/rng');
+
 let pass = 0, fail = 0;
 const results = [];
 
-// The simulation is stochastic by design (dropout, garbling, ISR sampling), so the
-// suite pins Math.random to a seeded generator and re-seeds per test from the test's
-// own name. Every test is then independently reproducible and test order cannot
-// matter. Run `FOGLINE_FUZZ=1 npm test` to exercise the real generator instead.
+// The simulation draws every random number from its own seeded generator, so a
+// test is reproducible by passing the seed. Each test gets a seed from its own
+// name — independent of order. `npm run test:fuzz` gives every test a random
+// seed instead and prints it on failure, so a rare case can be replayed.
 const FUZZ = process.env.FOGLINE_FUZZ === '1';
-const REAL_RANDOM = Math.random;
-let _s = 0x2f6e2b1 >>> 0;
-const lcg = () => { _s = (Math.imul(_s, 1664525) + 1013904223) >>> 0; return _s / 4294967296; };
-const hash = (str) => { let h = 2166136261 >>> 0; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+let SEED = 0;
+const freshSeed = () => require('crypto').randomBytes(4).readUInt32BE(0);
 
 function test(name, fn) {
-  if (FUZZ) Math.random = REAL_RANDOM;
-  else { _s = hash(name); Math.random = lcg; }
+  SEED = FUZZ ? freshSeed() : seedFrom(name);
+  const seed = SEED;
   try { fn(); results.push(['PASS', name]); pass++; }
-  catch (e) { results.push(['FAIL', name, e.message]); fail++; }
+  catch (e) { results.push(['FAIL', name, e.message + (FUZZ ? ` [seed ${seed}]` : '')]); fail++; }
 }
 function ok(cond, msg) { if (!cond) throw new Error(msg || 'expected truthy'); }
 function eq(a, b, msg) { if (a !== b) throw new Error(`${msg || 'not equal'}: got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`); }
@@ -36,16 +36,20 @@ function gte(a, b, msg) { if (!(a >= b)) throw new Error(`${msg || 'not >='}: ${
 function lt(a, b, msg) { if (!(a < b)) throw new Error(`${msg || 'not less'}: ${a} is not < ${b}`); }
 
 // Pin a specific seed for a block that asserts on a particular random outcome.
+// In fuzz mode the block still gets a random one: a property that only holds
+// for one seed is not a property.
 function withSeed(seed, fn) {
-  const prev = _s, prevRandom = Math.random;
-  _s = seed >>> 0;
-  Math.random = lcg;
-  try { return fn(); } finally { _s = prev; Math.random = prevRandom; }
+  const prev = SEED;
+  SEED = FUZZ ? freshSeed() : seed >>> 0;
+  const s = SEED;
+  try { return fn(); } catch (e) { if (FUZZ) e.message += ` [seed ${s}]`; throw e; } finally { SEED = prev; }
 }
+const G = (scenario, cfg = {}, opts = {}) => new Game(scenario, cfg, { seed: SEED, ...opts });
+const rng = () => mulberry32(SEED);
 
 const run = (g, seconds, dt = 0.2) => { for (let i = 0; i < Math.round(seconds / dt); i++) g.tick(dt); };
 const start = (scenario = 'BASELINE', cfg = {}) => {
-  const g = new Game(scenario, cfg);
+  const g = G(scenario, cfg);
   g.admin({ type: 'start' });
   return g;
 };
@@ -112,7 +116,7 @@ test('spoofers and jammers do not affect each other', () => {
 test('a clear net delivers everything, quickly', () => {
   const cfg = { delayMin: 6, delayMax: 18, dropRate: 0.4, garbleRate: 0.45 };
   const got = [];
-  const net = new CommsNet(cfg, { linkProfile: () => ({ sevDelay: 0, sevDrop: 0, sevGarble: 0, severity: 0, sources: [] }), onDeliver: (d) => got.push(d) });
+  const net = new CommsNet(cfg, { linkProfile: () => ({ sevDelay: 0, sevDrop: 0, sevGarble: 0, severity: 0, sources: [] }), onDeliver: (d) => got.push(d), rng: rng() });
   net.register(['ALPHA']);
   for (let i = 0; i < 50; i++) net.send('ALPHA', { kind: 'ISR', from: 'HQ', text: 'x' });
   net.tick(1);
@@ -124,7 +128,7 @@ test('a clear net delivers everything, quickly', () => {
 test('a jammed net loses, garbles and delays traffic', () => withSeed(7, () => {
   const cfg = { delayMin: 6, delayMax: 18, dropRate: 0.4, garbleRate: 0.45 };
   const got = [];
-  const net = new CommsNet(cfg, { linkProfile: () => ({ sevDelay: 1, sevDrop: 1, sevGarble: 1, severity: 1, sources: ['MANUAL'] }), onDeliver: (d) => got.push(d) });
+  const net = new CommsNet(cfg, { linkProfile: () => ({ sevDelay: 1, sevDrop: 1, sevGarble: 1, severity: 1, sources: ['MANUAL'] }), onDeliver: (d) => got.push(d), rng: rng() });
   net.register(['ALPHA']);
   for (let i = 0; i < 200; i++) net.send('ALPHA', { kind: 'ISR', from: 'HQ', text: 'ENEMY ARMOR GRID G7', contacts: [{ track: 'T-01', type: 'ARMOR', x: 300, y: 300, enemyId: 'E1' }] });
   eq(got.length, 0, 'nothing should arrive instantly on a jammed net');
@@ -134,16 +138,18 @@ test('a jammed net loses, garbles and delays traffic', () => withSeed(7, () => {
   gt(net.stats.ALPHA.dropped, 20, 'some traffic must be lost');
   gt(net.stats.ALPHA.garbled, 20, 'some traffic must be garbled');
   gt(got.length, 50, 'but most of the rest should land eventually');
-  const garbled = got.find((d) => d.garbled);
-  ok(garbled, 'expected at least one garbled message');
-  ok(/#/.test(garbled.text), 'garbled text should show interference');
+  const garbled = got.filter((d) => d.garbled);
+  ok(garbled.length, 'expected at least one garbled message');
+  // one message can lose only whole words; across a jammed net some must break up
+  ok(garbled.some((d) => /#/.test(d.text)), 'garbled text should show interference');
+  ok(garbled.some((d) => /SAY AGAIN/.test(d.text)), 'and the operator should be asking for a repeat');
   const moved = got.find((d) => d.garbled && d.contacts[0].x !== 300);
   ok(moved, 'garbling should displace reported positions — that is what a contradictory report is');
 }));
 
 test('the ledger records when a report could have arrived, not when it did', () => {
   const cfg = { delayMin: 20, delayMax: 20, dropRate: 0, garbleRate: 0 };
-  const net = new CommsNet(cfg, { linkProfile: () => ({ sevDelay: 1, sevDrop: 0, sevGarble: 0, severity: 1, sources: [] }), onDeliver: () => {} });
+  const net = new CommsNet(cfg, { linkProfile: () => ({ sevDelay: 1, sevDrop: 0, sevGarble: 0, severity: 1, sources: [] }), onDeliver: () => {}, rng: rng() });
   net.register(['ALPHA']);
   net.send('ALPHA', { kind: 'ISR', from: 'HQ', text: 'x', contacts: [{ track: 'T-01', type: 'ARMOR', x: 1, y: 1, enemyId: 'E9' }] });
   const aw = net.awareness.get('ALPHA', 'E9');
@@ -155,7 +161,7 @@ test('the ledger records when a report could have arrived, not when it did', () 
 // Simulation: what a trainee can see
 // ===========================================================================
 test('the exercise starts in the lobby and issues the commander\'s intent', () => {
-  const g = new Game('BASELINE');
+  const g = G('BASELINE');
   eq(g.status, 'LOBBY');
   g.admin({ type: 'start' });
   eq(g.status, 'RUNNING');
@@ -204,8 +210,10 @@ test('a jammed commander falls behind a clear one on the same report', () => wit
   g.admin({ type: 'link', pid: 'BRAVO', set: { delay: true, drop: true, garble: true } });
   run(g, 60);
   const a = g.comms.stats.ALPHA, b = g.comms.stats.BRAVO;
-  gt(b.dropped, a.dropped, 'the jammed commander should lose more traffic');
-  gt(b.garbled, a.garbled, 'and receive more corrupted traffic');
+  // rates, not counts: the two commanders are not sent the same volume of traffic
+  const rate = (st, k) => st[k] / Math.max(1, st.sent);
+  gt(rate(b, 'dropped'), rate(a, 'dropped'), 'the jammed commander should lose more traffic');
+  gt(rate(b, 'garbled'), rate(a, 'garbled'), 'and receive more corrupted traffic');
   gt(b.delaySum / Math.max(1, b.delivered), a.delaySum / Math.max(1, a.delivered), 'and run later');
 }));
 
@@ -241,8 +249,10 @@ test('a phantom contact lands on the picture and acting on it is recorded', () =
 test('a false kill report removes a live enemy from the picture', () => {
   const g = start('BASELINE');
   clearAll(g);
-  run(g, 24.4);                  // just past an HQ ISR broadcast, nobody has eyes on E1
-  const held = Object.values(g.beliefs.CHARLIE.tracks).find((t) => t.enemyId && t.src !== 'VISUAL');
+  // wait for an HQ ISR broadcast to reach CHARLIE; a jammed net can lose the first one
+  const reported = () => Object.values(g.beliefs.CHARLIE.tracks).find((t) => t.enemyId && t.src !== 'VISUAL');
+  for (let i = 0; i < 20 && !reported(); i++) run(g, 12);
+  const held = reported();
   ok(held, 'CHARLIE needs to hold a reported track first');
   const res = g.admin({ type: 'falseBda', pid: 'CHARLIE', track: held.track });
   ok(res.ok, JSON.stringify(res));
@@ -519,7 +529,7 @@ test('resetting returns everything to the lobby', () => {
 });
 
 test('scenarios differ in the way they are meant to', () => {
-  const base = new Game('BASELINE'), dec = new Game('DECEPTION');
+  const base = G('BASELINE'), dec = G('DECEPTION');
   eq(base.ew.emitters.length, 0, 'the baseline has no EW');
   gt(dec.ew.emitters.length, 1, 'the deception scenario has several emitters');
   eq(base.cfg.redcell, 'OFF');
@@ -529,7 +539,7 @@ test('scenarios differ in the way they are meant to', () => {
 });
 
 test('instructor settings are clamped, not trusted', () => {
-  const g = new Game('CONTESTED');
+  const g = G('CONTESTED');
   g.admin({ type: 'config', config: { duration: 99999, intensity: 99, dropRate: 5, delayMin: 50, delayMax: 2, timeScale: -4 } });
   lt(g.cfg.duration, 3601);
   lt(g.cfg.intensity, 7);
@@ -542,9 +552,165 @@ test('instructor settings are clamped, not trusted', () => {
 });
 
 // ===========================================================================
+// Determinism: same seed + same inputs = same exercise
+// ===========================================================================
+const fs = require('fs');
+const path = require('path');
+const { rerun, fingerprint } = require('../engine/counterfactual');
+
+test('nothing in the engine draws from Math.random', () => {
+  const dir = path.join(__dirname, '..', 'engine');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    ok(!/Math\.random/.test(src), `${f} uses Math.random — draw from the exercise's seeded rng instead`);
+  }
+});
+
+// The golden exercise: a fixed seed and a fixed script of inputs, with the red
+// cell acting on its own. Everything the engine does must follow from those.
+function goldenRun(seed = 42) {
+  const g = new Game('DECEPTION', { redcell: 'AUTO' }, { seed });
+  g.action('ALPHA', { type: 'identify', name: 'Lt Singh' });
+  g.admin({ type: 'start' });
+  const open = (p) => g.disputes.find((d) => d.pid === p && !d.answer && !d.froze && !d.lost && d.readyT != null);
+  for (let i = 1; i <= 300; i++) {
+    g.tick(0.2);
+    if (i === 20) g.action('ALPHA', { type: 'move', x: 300, y: 340, rationale: 'closing the crossing' });
+    if (i === 40) g.action('BRAVO', { type: 'uav', x: 740, y: 200, rationale: 'check the approach' });
+    if (i === 90) {
+      const tr = Object.values(g.beliefs.CHARLIE.tracks)[0];
+      if (tr) g.action('CHARLIE', { type: 'mark', track: tr.track, mark: 'CONFIRMED', confidence: 70 });
+    }
+    if (i % 25 === 0) for (const p of g.pids) { const d = open(p); if (d) g.action(p, { type: 'resolve', dispute: d.id, answer: i % 50 ? 'present' : 'absent', confidence: 80 }); }
+    if (i === 150) g.action('CHARLIE', { type: 'auth', rationale: 'that order is not like HQ' });
+    if (i === 160) { g.admin({ type: 'pause' }); g.action('BRAVO', { type: 'hold' }); g.admin({ type: 'start' }); }
+    if (i === 200) g.action('BRAVO', { type: 'chat', text: 'armour moving south of BR EAST' });
+    if (i === 240) g.admin({ type: 'fake', pid: 'ALPHA', x: 250, y: 200, etype: 'ARMOR' });
+  }
+  g.admin({ type: 'end' });
+  return g;
+}
+// Regenerated on purpose whenever the simulation changes: `GOLDEN=print node test/engine.test.js`.
+const GOLDEN = '404977755b8c3d7c2982e30c09236f0f1abed25927846e0ab351b3f025d2d307';
+
+test('the golden exercise is reproduced exactly: twice in one process, and from its record', () => {
+  if (FUZZ) return;                                   // the golden run has its own seed
+  const a = goldenRun(), b = goldenRun();
+  const h = fingerprint(a.aar);
+  if (process.env.GOLDEN === 'print') console.log('golden fingerprint:', h);
+  eq(fingerprint(b.aar), h, 'a second run in the same process found hidden shared state');
+  eq(JSON.stringify(b.aar.replay.frames), JSON.stringify(a.aar.replay.frames), 'and the replay frames match too');
+  const again = rerun(JSON.parse(JSON.stringify(a.aar)));
+  eq(again.skipped, 0, 'every recorded input should apply again');
+  eq(fingerprint(again.aar), h, 'the record (seed, starting state, inputs) must reproduce the exercise');
+  ok(a.aar.inputs.some((x) => x.via === 'redcell'), 'red-cell actions are on the record');
+  ok(a.aar.inputs.some((x) => x.via === 'trainee') && a.aar.inputs.some((x) => x.via === 'instructor'), 'and so are both kinds of outside input');
+  if (GOLDEN !== 'pending') eq(h, GOLDEN, 'the golden fingerprint changed — if the simulation changed on purpose, regenerate it');
+});
+
+test('a different seed is a different exercise', () => {
+  const a = G('DECEPTION', { redcell: 'AUTO', duration: 60 }, { seed: 1 });
+  const b = G('DECEPTION', { redcell: 'AUTO', duration: 60 }, { seed: 2 });
+  for (const g of [a, b]) { g.admin({ type: 'start' }); run(g, 62); }
+  ok(fingerprint(a.aar) !== fingerprint(b.aar));
+  eq(a.aar.seed, 1); eq(a.aar.seedHex, '00000001');
+});
+
+test('looking at the exercise never changes it', () => {
+  const quiet = G('DECEPTION', { redcell: 'AUTO', duration: 60 }, { seed: 77 });
+  const watched = G('DECEPTION', { redcell: 'AUTO', duration: 60 }, { seed: 77 });
+  for (const g of [quiet, watched]) g.admin({ type: 'start' });
+  for (let i = 0; i < 305; i++) {
+    quiet.tick(0.2);
+    watched.tick(0.2);
+    for (const p of watched.pids) watched.traineeView(p);   // the server builds these every tick, once per screen
+    watched.instructorView();
+  }
+  eq(fingerprint(watched.aar), fingerprint(quiet.aar), 'how many screens are open must not move the random stream');
+});
+
+test('"same exercise as" starts the next run on a chosen seed', () => {
+  const g = G('CONTESTED');
+  g.admin({ type: 'reset', scenario: 'DRILL', seed: '0000002A' });
+  eq(g.seed, 42);
+  eq(g.scenario.id, 'DRILL');
+  g.admin({ type: 'scenario', id: 'BASELINE', seed: 7 });
+  eq(g.seed, 7);
+});
+
+test('a counterfactual on a working radio replays the same orders into a clear net', () => {
+  const g = G('CONTESTED', { duration: 120 }, { seed: 5 });
+  g.admin({ type: 'start' });
+  g.pids.forEach((p) => g.admin({ type: 'link', pid: p, set: { delay: true, drop: true, garble: true } }));
+  run(g, 30);
+  g.action('ALPHA', { type: 'move', x: 300, y: 340 });
+  run(g, 95);
+  const cf = rerun(g.aar, { clearComms: true });
+  eq(cf.aar.costOfFog.reactionDelayMin, 0, 'nobody is late on a clear net');
+  gt(g.aar.costOfFog.reactionDelayMin, 0, 'while the jammed original was');
+  ok(cf.skippedList.every((s) => s.type === 'link'), 'the only inputs left out are the jamming itself');
+  eq(cf.aar.endT, g.aar.endT, 'and it stops where the original stopped');
+});
+
+// ===========================================================================
+// Truth never reaches a trainee — kept forever, extended by every later tier
+// ===========================================================================
+function walkXY(v, out = []) {
+  if (Array.isArray(v)) v.forEach((x) => walkXY(x, out));
+  else if (v && typeof v === 'object') {
+    if (typeof v.x === 'number' && typeof v.y === 'number') out.push(v);
+    Object.values(v).forEach((x) => walkXY(x, out));
+  }
+  return out;
+}
+function assertNoTruth(g, pid, payload, label) {
+  const s = JSON.stringify(payload);
+  const m = s.match(/"E[1-9]"/);
+  ok(!m, `${label}: an enemy id ${m && m[0]} reached ${pid}`);
+  ok(!/"fake"\s*:/.test(s), `${label}: a fake flag reached ${pid}`);
+  const field = s.match(/"(onPhantom|truth|liars|variant|correct|outcome|trueFrom|forged|enemyId)"\s*:/);
+  ok(!field, `${label}: a truth-bearing field reached ${pid}: ${field && field[1]}`);
+  for (const l of g.redcell.log) ok(!s.includes(l.reason.slice(0, 40)), `${label}: the red cell's reasoning reached ${pid}`);
+  const held = new Set(Object.values(g.beliefs[pid].tracks).map((t) => t.enemyId).filter(Boolean));
+  const pts = walkXY(payload);
+  for (const e of g.enemies) {
+    if (!e.spawned || !e.alive || held.has(e.id)) continue;
+    const ex = Math.round(e.x * 10) / 10, ey = Math.round(e.y * 10) / 10;
+    ok(!pts.some((q) => Math.abs(q.x - ex) < 0.05 && Math.abs(q.y - ey) < 0.05), `${label}: ${pid} was sent where ${e.id} really is, with no track on it`);
+  }
+}
+
+test('truth never reaches a trainee: views, messages, events and replies, across a deceptive run', () => {
+  const g = G('DECEPTION', { redcell: 'AUTO', redcellBudget: 30, duration: 400, disputeEvery: 20 });
+  g.admin({ type: 'start' });
+  let checks = 0;
+  for (let i = 1; i <= 1500; i++) {
+    g.tick(0.2);
+    const sent = g.outbox; g.outbox = [];
+    if (i % 30 === 0) {
+      for (const p of g.pids) {
+        checks++;
+        assertNoTruth(g, p, g.traineeView(p), 'view');
+        assertNoTruth(g, p, g.inbox[p], 'messages');
+        assertNoTruth(g, p, sent.filter((o) => o.to === p || o.to === 'all'), 'events');
+        const d = g.disputes.find((x) => x.pid === p && !x.answer && !x.froze && !x.lost && x.readyT != null);
+        if (d) assertNoTruth(g, p, g.traineeResult(g.action(p, { type: 'resolve', dispute: d.id, answer: 'present', confidence: 90 })), 'reply');
+        const tr = Object.values(g.beliefs[p].tracks).find((t) => t.fake) || Object.values(g.beliefs[p].tracks)[0];
+        if (tr) assertNoTruth(g, p, g.traineeResult(g.action(p, { type: 'fire', x: tr.x, y: tr.y, ref: tr.track })), 'reply');
+      }
+    }
+    if (g.status === 'ENDED') break;
+  }
+  // the exercise can end early (the enemy destroyed, the team destroyed), so this
+  // is a floor on the sampling, not a count of ticks
+  gte(checks, 60, 'at least 20 moments × 3 seats were examined');
+  ok(g.fakes.length > 0 && g.redcell.log.length > 0, 'and the run really had deception in it');
+});
+
+// ===========================================================================
 for (const [status, name, msg] of results) {
   const tag = status === 'PASS' ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
   console.log(`${tag} ${name}` + (msg ? `\n    \x1b[31m${msg}\x1b[0m` : ''));
 }
-console.log(`\n${pass} passed, ${fail} failed${FUZZ ? ' (fuzz mode — unseeded)' : ''}\n`);
+console.log(`\n${pass} passed, ${fail} failed${FUZZ ? ' (fuzz mode — a random seed per test)' : ''}\n`);
 process.exit(fail ? 1 : 0);

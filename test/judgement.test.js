@@ -14,22 +14,26 @@ const { ProfileStore } = require('../engine/profile');
 const { calibrate, weakSpot, weakSpotReason } = require('../engine/calibration');
 const { VARIANTS, stanceOf } = require('../engine/sources');
 
+const { seedFrom } = require('../engine/rng');
+
 let pass = 0, fail = 0;
 const results = [];
-let _s = 0;
-const lcg = () => { _s = (Math.imul(_s, 1664525) + 1013904223) >>> 0; return _s / 4294967296; };
-const hash = (str) => { let h = 2166136261 >>> 0; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+// A seed per test from its name; `npm run test:fuzz` draws a random one and prints it on failure.
+const FUZZ = process.env.FOGLINE_FUZZ === '1';
+let SEED = 0;
 function test(name, fn) {
-  _s = hash(name); Math.random = lcg;
-  try { fn(); results.push(['PASS', name]); pass++; } catch (e) { results.push(['FAIL', name, e.message]); fail++; }
+  SEED = FUZZ ? require('crypto').randomBytes(4).readUInt32BE(0) : seedFrom(name);
+  const seed = SEED;
+  try { fn(); results.push(['PASS', name]); pass++; } catch (e) { results.push(['FAIL', name, e.message + (FUZZ ? ` [seed ${seed}]` : '')]); fail++; }
 }
+const G = (scenario, cfg = {}, opts = {}) => new Game(scenario, cfg, { seed: SEED, ...opts });
 const ok = (c, m) => { if (!c) throw new Error(m || 'expected truthy'); };
 const eq = (a, b, m) => { if (a !== b) throw new Error(`${m || 'not equal'}: got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`); };
 const gt = (a, b, m) => { if (!(a > b)) throw new Error(`${m || 'not greater'}: ${a} is not > ${b}`); };
 
 const run = (g, sec) => { for (let i = 0; i < Math.round(sec / 0.2); i++) g.tick(0.2); };
 function start(scenario = 'BASELINE', cfg = {}, profiles) {
-  const g = new Game(scenario, { duration: 900, ...cfg }, { profiles: profiles || new ProfileStore(null) });
+  const g = G(scenario, { duration: 900, ...cfg }, { profiles: profiles || new ProfileStore(null) });
   g.admin({ type: 'start' });
   g.pids.forEach((p) => g.admin({ type: 'link', pid: p, mode: 'clear' }));
   return g;
@@ -264,7 +268,7 @@ test('the drill keeps disagreements coming to a commander who answers them', () 
 });
 
 test('the drill presses a hesitant commander harder than a full exercise', () => {
-  const drill = new Game('DRILL'), full = new Game('DECEPTION');
+  const drill = G('DRILL'), full = G('DECEPTION');
   gt(full.cfg.disputeTTL, drill.cfg.disputeTTL, 'less time to decide in the drill');
 });
 
@@ -308,9 +312,12 @@ test('with the red cell off, nothing is targeted and every source is tested even
 
 test('a commander who will not decide is pressed with the hardest kind', () => {
   const g = start('BASELINE', { redcell: 'AUTO', redcellBudget: 0 });
+  // a commander who does nothing at the crossing for four minutes can be overrun
+  // before the third disagreement reaches them; keep this one out of the fight
+  g.action('ALPHA', { type: 'move', x: 300, y: 620 });
   run(g, 45);
   for (let i = 0; i < 3; i++) {
-    g.admin({ type: 'contradiction', pid: 'ALPHA', variant: 'DRONE_SPOOFED' });
+    ok(g.admin({ type: 'contradiction', pid: 'ALPHA', variant: 'DRONE_SPOOFED' }).ok, 'staged');
     run(g, 60);
   }
   eq(g.weakSpotFor('ALPHA').source, 'FREEZE');
@@ -399,7 +406,7 @@ test('the record follows the person, not the seat', () => {
   eq(store.roundsFor('Capt Rao'), 1, 'round one is on the record');
 
   // next round, same person, different laptop
-  const r2 = new Game('BASELINE', { duration: 900, redcell: 'AUTO', redcellBudget: 0 }, { profiles: store });
+  const r2 = G('BASELINE', { duration: 900, redcell: 'AUTO', redcellBudget: 0 }, { profiles: store });
   r2.action('CHARLIE', { type: 'identify', name: 'capt rao' });
   r2.admin({ type: 'start' });
   eq(r2.weakSpotFor('CHARLIE').source, 'UAV', 'the bias learned last round is known before they make a move');
@@ -505,7 +512,7 @@ test('records survive a restart of the server', () => {
 });
 
 test('a second screen on a seat cannot wipe the name of whoever is playing it', () => {
-  const g = new Game('BASELINE');
+  const g = G('BASELINE');
   g.action('BRAVO', { type: 'identify', name: 'Capt Rao' });
   g.action('BRAVO', { type: 'identify', name: '', auto: true });      // a judge opens /trainee?pid=BRAVO on a phone
   eq(g.whoOf('BRAVO'), 'Capt Rao', 'the round must still go on Capt Rao\u2019s record');
@@ -514,7 +521,7 @@ test('a second screen on a seat cannot wipe the name of whoever is playing it', 
 });
 
 test('a name is cleaned before it is used as a key', () => {
-  const g = new Game('BASELINE');
+  const g = G('BASELINE');
   g.action('ALPHA', { type: 'identify', name: '  <script>Capt  Rao</script>  ' });
   ok(!/[<>]/.test(g.whoOf('ALPHA')), 'no markup in a name: ' + g.whoOf('ALPHA'));
   g.action('ALPHA', { type: 'identify', name: '' });
@@ -548,5 +555,5 @@ for (const [status, name, msg] of results) {
   const tag = status === 'PASS' ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
   console.log(`${tag} ${name}` + (msg ? `\n    \x1b[31m${msg}\x1b[0m` : ''));
 }
-console.log(`\n${pass} passed, ${fail} failed\n`);
+console.log(`\n${pass} passed, ${fail} failed${FUZZ ? ' (fuzz mode — a random seed per test)' : ''}\n`);
 process.exit(fail ? 1 : 0);

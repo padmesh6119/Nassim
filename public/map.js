@@ -434,7 +434,8 @@
 
     label(text, x, y, color, align = 'center', bg = true) {
       const g = this.ctx;
-      const px = Math.max(8.5, Math.min(11.5, 11.5 * (this.s / 0.78)));
+      // a track label is read from the back of a room, not from a desk
+      const px = Math.max(11, Math.min(13.5, 13.5 * (this.s / 0.78)));
       g.font = NARROW(px);
       const w = g.measureText(text).width;
       const x0 = this.X(0), x1 = this.X(T.W), y0 = this.Y(0), y1 = this.Y(T.H);

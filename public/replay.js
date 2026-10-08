@@ -3,6 +3,11 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  const TOKEN = new URLSearchParams(location.search).get('token') || '';
+  const get = (u) => fetch(u, TOKEN ? { headers: { 'x-fogline-token': TOKEN } } : undefined);
+  const tok = (u) => (TOKEN ? u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN) : u);
+  document.querySelectorAll('[data-tok]').forEach((a) => { a.href = tok(a.getAttribute('href')); });
+
   let R = null;      // replay payload
   let A = null;      // the report that goes with it
   let view = 'ALPHA';
@@ -15,7 +20,7 @@
 
   // ---- loading ---------------------------------------------------------
   async function loadRuns() {
-    const runs = await fetch('/api/runs').then((r) => r.json()).then((r) => r.runs).catch(() => []);
+    const runs = await get('/api/runs').then((r) => r.json()).then((r) => r.runs || []).catch(() => []);
     const opts = ['<option value="">This exercise</option>']
       .concat(runs.map((r) => `<option value="${esc(r.id)}">${esc(r.scenarioName)} · ${new Date(r.generatedAt).toLocaleString()} · fog ${r.fogMin} min</option>`));
     $('runSel').innerHTML = opts.join('');
@@ -23,9 +28,11 @@
 
   async function load(runId) {
     const url = runId ? `/api/replay?run=${encodeURIComponent(runId)}` : '/api/replay';
-    const res = await fetch(url);
+    const res = await get(url);
     if (!res.ok) {
-      $('main').innerHTML = '<div class="empty">No exercise to replay yet. Run one from the instructor console, then come back.</div>';
+      $('main').innerHTML = res.status === 401
+        ? '<div class="empty">The exercise is running. The replay opens at Endex.</div>'
+        : '<div class="empty">No exercise to replay yet. Run one from the instructor console, then come back.</div>';
       $('scrub').style.display = 'none';
       return;
     }

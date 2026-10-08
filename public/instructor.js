@@ -6,10 +6,15 @@
 
   let S = null, view = 'ALPHA', aiming = null, settingsBuilt = false, scenBuilt = false;
   const ITOKEN = new URLSearchParams(location.search).get('token') || '';
+  const withToken = (u) => u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(ITOKEN);
+  const get = (u) => fetch(u, { headers: { 'x-fogline-token': ITOKEN } }).then((r) => r.json());
+  // the debrief and replay open with the truth while the exercise runs, so they go with the token
+  document.querySelectorAll('a[href="/replay"], a[href="/report"]').forEach((a) => { a.href = withToken(a.getAttribute('href')); });
 
   const admin = (body) => fetch('/api/admin', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, token: ITOKEN }),
-  }).then((r) => r.json()).catch(() => ({ error: 'no connection' }));
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-fogline-token': ITOKEN }, body: JSON.stringify(body),
+  }).then((r) => (r.status === 401 ? { error: 'The instructor token is missing or wrong — open the console from the link the server printed' } : r.json()))
+    .catch(() => ({ error: 'no connection' }));
 
   function toast(text, bad) {
     const d = document.createElement('div');
@@ -25,6 +30,13 @@
   $('pauseBtn').onclick = () => send({ type: 'pause' });
   $('endBtn').onclick = () => send({ type: 'end' }, 'Endex — the debrief is ready');
   $('resetBtn').onclick = () => { if (confirm('Reset the exercise? Everything from this run is cleared.')) send({ type: 'reset' }); };
+  $('seedRead').onclick = () => {
+    // the seed is the whole exercise: same seed, same scenario, same orders, same run.
+    if (S && (S.status === 'RUNNING' || S.status === 'PAUSED')) return toast('End the exercise before setting up the next one', true);
+    const want = prompt('Same exercise as…\n\nSeed — it is printed on the debrief header of the run you want to repeat:', S ? S.seedHex : '');
+    if (want == null || !want.trim()) return;
+    send({ type: 'reset', seed: want.trim() }, 'Reset — the next run uses that seed');
+  };
   $('cfgBtn').onclick = () => { const c = $('settings'); c.style.display = c.style.display === 'flex' ? 'none' : 'flex'; };
   $('markBtn').onclick = () => {
     // one click, no modal — an instructor marking a moment is watching the screen,
@@ -54,7 +66,7 @@
       + '<span class="spacer"></span>'
       + '<span id="recordsNote" style="font-size:11.5px;color:#9a9281"></span>'
       + '<button class="btn alarm" id="clearRecords" title="Forget every trainee\'s history — use before a fresh demo">Clear trainee records</button>';
-    fetch('/api/profiles').then((r) => r.json()).then((d) => {
+    get('/api/profiles').then((d) => {
       const n = (d.profiles || []).length;
       if ($('recordsNote')) $('recordsNote').textContent = n ? `${n} trainee record${n === 1 ? '' : 's'} on file` : 'no trainee records yet';
     }).catch(() => {});
@@ -257,7 +269,8 @@
   es.addEventListener('decision', (e) => addDecision(JSON.parse(e.data)));
   es.addEventListener('reset', () => { $('feed').innerHTML = ''; ser = 0; settingsBuilt = false; unaim(); });
   es.addEventListener('ended', () => entry('', '<b>Endex — open the debrief</b>', 'control'));
-  es.onerror = () => { $('status').textContent = 'LINK LOST'; $('status').className = 'state ENDED'; };
+  es.onerror = () => { $('status').textContent = S ? 'LINK LOST' : 'NO TOKEN?'; $('status').className = 'state ENDED'; };
+  es.addEventListener('reload', () => location.reload());
 
   es.addEventListener('state', (e) => {
     S = JSON.parse(e.data);
@@ -273,6 +286,7 @@
     }
     $('scenSel').value = S.scenario.id;
     $('scenSel').disabled = S.status === 'RUNNING' || S.status === 'PAUSED';
+    $('seedRead').textContent = 'SEED ' + S.seedHex;
     if (!settingsBuilt) {
       buildSettings(S.cfg);
       settingsBuilt = true;

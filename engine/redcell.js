@@ -73,7 +73,7 @@ class RedCell {
         },
       },
       {
-        id: 'FLANK_FAKE', name: 'Deception on the quiet flank', auto: false, cooldown: 45,
+        id: 'FLANK_FAKE', deceptive: true, name: 'Deception on the quiet flank', auto: false, cooldown: 45,
         test: (pid) => {
           const u = this.unit(pid);
           const task = this.task(pid);
@@ -113,7 +113,7 @@ class RedCell {
         },
       },
       {
-        id: 'FALSE_BDA', name: 'False kill report', auto: true, cooldown: 55,
+        id: 'FALSE_BDA', deceptive: true, name: 'False kill report', auto: true, cooldown: 55,
         test: (pid) => {
           const u = this.unit(pid);
           if (!u || !u.alive) return null;
@@ -135,7 +135,7 @@ class RedCell {
         },
       },
       {
-        id: 'FORGED_ORDER', name: 'Forged HQ order', auto: true, cooldown: 80,
+        id: 'FORGED_ORDER', deceptive: true, name: 'Forged HQ order', auto: true, cooldown: 80,
         test: (pid) => {
           const u = this.unit(pid), task = this.task(pid);
           if (!u || !u.alive || !task) return null;
@@ -154,7 +154,7 @@ class RedCell {
         },
       },
       {
-        id: 'SPOOF_POSITION', name: 'Spoof friendly position', auto: true, cooldown: 60,
+        id: 'SPOOF_POSITION', deceptive: true, name: 'Spoof friendly position', auto: true, cooldown: 60,
         test: (pid) => {
           const u = this.unit(pid);
           if (!u || !u.alive || this.sim.spoofed[pid] > this.sim.t) return null;
@@ -172,7 +172,7 @@ class RedCell {
       {
         // The adaptive play: once a commander has shown which source they lean
         // on, stage a disagreement in which that source is the one that lies.
-        id: 'TARGETED_CONTRADICTION', name: 'Exploit a learned bias', auto: false, cooldown: 45,
+        id: 'TARGETED_CONTRADICTION', deceptive: true, name: 'Exploit a learned bias', auto: false, cooldown: 45,
         test: (pid) => {
           if ((this.sim.cfg.disputeEvery || 0) > 0) return null;        // the drill already targets every disagreement
           const u = this.unit(pid);
@@ -221,6 +221,7 @@ class RedCell {
     const candidates = [];
     for (const rule of this.rules()) {
       if (this.mode === 'ASSIST' && rule.auto) continue;      // the nastier plays need AUTO
+      if (rule.deceptive && this.sim.cfg.noDeception) continue; // the counterfactual world: jamming only
       const last = this.ruleAt[rule.id];
       if (last != null && t - last < rule.cooldown) continue;
       for (const pid of this.sim.pids) {

@@ -26,6 +26,13 @@
   const NARROW = '"Archivo Narrow", sans-serif';
   const MONO = '"IBM Plex Mono", monospace';
 
+  // The instructor's link carries a token: while an exercise runs the debrief is theirs alone.
+  const TOKEN = new URLSearchParams(location.search).get('token') || '';
+  const get = (u) => fetch(u, TOKEN ? { headers: { 'x-fogline-token': TOKEN } } : undefined);
+  const tok = (u) => (TOKEN ? u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN) : u);
+
+  document.querySelectorAll('[data-tok]').forEach((a) => { a.href = tok(a.getAttribute('href')); });
+
   let A = null, PIDS = [], mm = (t) => t, sec = 0;
   const num = () => String(++sec);
 
@@ -276,7 +283,7 @@
     const box = $('cmpOut');
     if (!box) return;
     if (!idA || !idB) { box.innerHTML = '<p class="quiet">Choose two exercises to compare.</p>'; return; }
-    const r = await fetch(`/api/compare?a=${encodeURIComponent(idA)}&b=${encodeURIComponent(idB)}`).then((x) => x.json()).catch(() => null);
+    const r = await get(`/api/compare?a=${encodeURIComponent(idA)}&b=${encodeURIComponent(idB)}`).then((x) => x.json()).catch(() => null);
     if (!r || r.error) { box.innerHTML = '<p class="quiet">Those two could not be loaded.</p>'; return; }
     const M = [
       ['Cost of fog, minutes', (x) => x.costOfFog.reactionDelayMin, false],
@@ -441,19 +448,20 @@
 
   // ── build ───────────────────────────────────────────────────────────
   async function main() {
-    const runs = await fetch('/api/runs').then((r) => r.json()).then((r) => r.runs).catch(() => []);
+    const runs = await get('/api/runs').then((r) => r.json()).then((r) => r.runs || []).catch(() => []);
     const runId = new URLSearchParams(location.search).get('run') || '';
-    const res = await fetch(runId ? `/api/run/${encodeURIComponent(runId)}` : '/api/aar');
+    const res = await get(runId ? `/api/run/${encodeURIComponent(runId)}` : '/api/aar');
     if (!res.ok) {
+      const running = res.status === 401;
       // nothing to export, so do not offer exports that would download an error
       ['dlJson', 'dlCsv'].forEach((id) => { $(id).removeAttribute('href'); $(id).setAttribute('disabled', ''); });
       $('runPick').style.display = runs.length ? '' : 'none';
       $('runPick').innerHTML = runs.map((r) => `<option value="${esc(r.id)}">${esc(r.scenarioName)} · ${new Date(r.generatedAt).toLocaleString()}</option>`).join('');
-      $('runPick').onchange = (e) => { location.search = '?run=' + encodeURIComponent(e.target.value); };
+      $('runPick').onchange = (e) => { location.search = tok('?run=' + encodeURIComponent(e.target.value)); };
       root.innerHTML = `<div class="pagehead">
           <div class="cls">RESTRICTED — EXERCISE ONLY</div>
           <h1>After action review</h1>
-          <div class="sub">No exercise has finished yet</div>
+          <div class="sub">${running ? 'The exercise is running — the debrief opens at Endex' : 'No exercise has finished yet'}</div>
         </div>
         <section>
           <p>This page is written at <b>Endex</b>. Run an exercise from the instructor console and it will
@@ -472,8 +480,9 @@
 
     $('runPick').innerHTML = '<option value="">This exercise</option>'
       + runs.map((r) => `<option value="${esc(r.id)}" ${r.id === runId ? 'selected' : ''}>${esc(r.scenarioName)} · ${new Date(r.generatedAt).toLocaleString()}</option>`).join('');
-    $('runPick').onchange = (e) => { location.search = e.target.value ? '?run=' + encodeURIComponent(e.target.value) : ''; };
-    if (runId) { $('dlJson').href = `/api/run/${encodeURIComponent(runId)}`; $('dlCsv').href = `/api/run/${encodeURIComponent(runId)}?csv=1`; }
+    $('runPick').onchange = (e) => { location.search = tok(e.target.value ? '?run=' + encodeURIComponent(e.target.value) : '?'); };
+    $('dlJson').href = tok(runId ? `/api/run/${encodeURIComponent(runId)}` : '/api/aar.json');
+    $('dlCsv').href = tok(runId ? `/api/run/${encodeURIComponent(runId)}?csv=1` : '/api/aar.csv');
     $('meta').textContent = `${A.scenario.name} · ${A.startClock} to ${A.endClock}`;
 
     const F = A.costOfFog, O = A.outcome, M = A.missionCommand, TM = A.team;
@@ -487,7 +496,7 @@
       <div class="pagehead">
         <div class="cls">RESTRICTED — EXERCISE ONLY</div>
         <h1>After action review</h1>
-        <div class="sub">${esc(A.scenario.name)} · ${esc(A.scenario.area)} · ${A.startClock} to ${A.endClock}, ${A.durationMin} minutes of mission time · ${esc(A.endReason)}</div>
+        <div class="sub">${esc(A.scenario.name)} · ${esc(A.scenario.area)} · ${A.startClock} to ${A.endClock}, ${A.durationMin} minutes of mission time · ${esc(A.endReason)}${A.seedHex ? ` · <span class="seed" title="Give this to the instructor console to put another trainee through exactly this exercise.">SEED ${esc(A.seedHex)}</span>` : ''}</div>
       </div>
 
       <section>
@@ -546,7 +555,7 @@
           <div><div class="cap">As ${A.keyMoment.pid} believed it<span>what their map showed</span></div><canvas id="kmBelief"></canvas></div>
         </div>
         <figcaption>Red lines run from where they thought an enemy was to where it was. A red ring marks an enemy that was not on their map.
-          <a href="/replay?${runId ? 'run=' + encodeURIComponent(runId) + '&' : ''}t=${A.keyMoment.t}&pid=${A.keyMoment.pid}">Open the replay at this moment</a> to watch how it got there.</figcaption>
+          <a href="${tok(`/replay?${runId ? 'run=' + encodeURIComponent(runId) + '&' : ''}t=${A.keyMoment.t}&pid=${A.keyMoment.pid}`)}">Open the replay at this moment</a> to watch how it got there.</figcaption>
       </section>` : ''}
 
       <section>

@@ -98,6 +98,20 @@ class ProfileStore {
   }
 
   clear() { this.data = {}; this.save(); }
+
+  // A copy of these people's records, for a rerun to start from.
+  snapshot(names) {
+    const out = {};
+    for (const n of names) { const k = norm(n); if (k && this.data[k]) out[k] = JSON.parse(JSON.stringify(this.data[k])); }
+    return out;
+  }
+
+  // An in-memory store holding a snapshot: reads like the real one, never touches the disk.
+  static from(snapshot) {
+    const s = new ProfileStore(null);
+    s.data = JSON.parse(JSON.stringify(snapshot || {}));
+    return s;
+  }
 }
 
 module.exports = { ProfileStore, norm };

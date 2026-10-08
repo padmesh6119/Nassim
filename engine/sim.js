@@ -21,6 +21,8 @@ const { buildReport } = require('./aar');
 const { SOURCES, DISPUTABLE, VARIANTS, VARIANT_FOR, WEAKNESS_LABEL, BALANCED, attackLabel, stanceOf, majorityOf, claimText, placeFor } = require('./sources');
 const { calibrate, emptyTrust, weakSpotReason } = require('./calibration');
 const { ProfileStore } = require('./profile');
+const { mulberry32, noise, seedHex, parseSeed } = require('./rng');
+const crypto = require('crypto');
 
 const DISPUTE_TTL = 50;       // real seconds a commander has to resolve a disagreement once it is in front of them
 const DISPUTE_LOST = 70;      // a disagreement whose reports never arrived is withdrawn, not counted as a freeze
@@ -32,28 +34,40 @@ const BLIND_WINDOW = 15;      // damage taken this soon after a surprise sightin
 const ISOLATED = 0.4;         // link severity at or above which a commander is treated as cut off
 const RECOVERED = 0.2;
 
-const rand = (a, b) => a + Math.random() * (b - a);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
 
 class Game {
+  // opts.seed fixes every run of this game to one seed (tests, reruns); without
+  // it each reset draws a fresh seed and records it, so every run has one.
   constructor(scenarioId = 'CONTESTED', overrides = {}, opts = {}) {
     this.pids = PIDS;
     this.profiles = opts.profiles || new ProfileStore(null);
-    this.who = {};                 // callsign → trainee name; outlives a reset, so it follows the person
+    this.fixedSeed = parseSeed(opts.seed);
+    this.who = { ...(opts.who || {}) };   // callsign → trainee name; outlives a reset, so it follows the person
     this.reset(scenarioId, overrides);
   }
 
   whoOf(pid) { return this.who[pid] || pid; }
+  rand(a, b) { return a + this.rng() * (b - a); }
 
   // =========================================================================
   // Lifecycle
   // =========================================================================
-  reset(scenarioId = this.scenario ? this.scenario.id : 'CONTESTED', overrides = {}) {
+  reset(scenarioId = this.scenario ? this.scenario.id : 'CONTESTED', overrides = {}, seed = null) {
     this.scenario = buildScenario(scenarioId, overrides);
     this.cfg = this.scenario.config;
+    const s = parseSeed(seed);
+    this.seed = s != null ? s : this.fixedSeed != null ? this.fixedSeed : crypto.randomBytes(4).readUInt32BE(0);
+    this.rng = mulberry32(this.seed);
+    // What a rerun needs to start from: the settings, names and records as they
+    // were before anything happened, and every input in order after that.
+    this.cfg0 = JSON.parse(JSON.stringify(this.cfg));
+    this.who0 = { ...this.who };
+    this.namesSeen = new Set(Object.values(this.who));
+    this.inputs = [];
     this.status = 'LOBBY';
     this.t = 0;
     this.seq = 0;
@@ -84,6 +98,7 @@ class Game {
       linkProfile: (pid) => this.linkProfile(pid),
       onDeliver: (d) => this.deliver(d),
       onDrop: () => {},
+      rng: this.rng,
     });
     this.comms.register(PIDS);
 
@@ -173,6 +188,8 @@ class Game {
   // A commander's link quality: the instructor's switches OR'd with the EW field
   // at wherever that commander currently is. Walking out of a jammer works.
   linkProfile(pid) {
+    // the counterfactual "same exercise on a working radio"
+    if (this.cfg.commsClear) return { sevDelay: 0, sevDrop: 0, sevGarble: 0, severity: 0, masked: false, emitter: null, sources: [] };
     const u = this.unit(pid);
     const m = this.manual[pid];
     const manual = m.delay || m.drop || m.garble;
@@ -453,9 +470,9 @@ class Game {
   isrBroadcast() {
     const contacts = [];
     for (const e of this.enemies) {
-      if (!e.spawned || !e.alive || Math.random() > 0.85) continue;
+      if (!e.spawned || !e.alive || this.rng() > 0.85) continue;
       const track = this.ensureTrack(e);
-      contacts.push({ track, type: e.type, x: clamp(e.x + rand(-12, 12), 0, T.W), y: clamp(e.y + rand(-12, 12), 0, T.H), enemyId: e.id });
+      contacts.push({ track, type: e.type, x: clamp(e.x + this.rand(-12, 12), 0, T.W), y: clamp(e.y + this.rand(-12, 12), 0, T.H), enemyId: e.id });
     }
     if (!contacts.length) return;
     const text = 'DRONE FEED: ' + contacts.map((k) => `${k.track} ${k.type} ${T.gridRef(k.x, k.y)}`).join(' | ');
@@ -468,11 +485,11 @@ class Game {
       // GPS spoofing (emitter field or a red-cell action) falsifies the position
       // this unit reports about itself — teammates plan around a ghost.
       const spoof = this.ew.spoofAt(u);
-      const active = this.spoofed[u.pid] > this.t || spoof.severity > 0.3;
+      const active = !this.cfg.noDeception && (this.spoofed[u.pid] > this.t || spoof.severity > 0.3);
       let pos = { x: u.x, y: u.y };
       if (active) {
         if (!this.spoofVec[u.pid]) {
-          const a = rand(0, Math.PI * 2), r = rand(95, 165);
+          const a = this.rand(0, Math.PI * 2), r = this.rand(95, 165);
           this.spoofVec[u.pid] = { dx: Math.cos(a) * r, dy: Math.sin(a) * r };
         }
         const v = this.spoofVec[u.pid];
@@ -728,7 +745,7 @@ class Game {
     }
 
     let pick = opts.variant && VARIANTS[opts.variant] ? { variant: opts.variant, targeted: null } : this.chooseVariant(pid);
-    let place = placeFor(this, pid, VARIANTS[pick.variant].truth);
+    let place = placeFor(this, pid, VARIANTS[pick.variant].truth, this.rng);
     let note = null;
     if (!place) {
       // Nothing on the ground can carry a "the enemy really is there" case yet:
@@ -736,7 +753,7 @@ class Game {
       const empty = (list) => list.find((k) => VARIANTS[k].truth === 'absent');
       const aimed = pick.targeted ? empty(VARIANT_FOR[pick.targeted.source] || []) : null;
       const fallback = aimed || empty([pick.variant]) || empty(BALANCED.slice(this.disputeStats[pid].issued % BALANCED.length).concat(BALANCED));
-      place = placeFor(this, pid, VARIANTS[fallback].truth);
+      place = placeFor(this, pid, VARIANTS[fallback].truth, this.rng);
       if (!place) return { error: 'No ground to stage a disagreement on yet' };
       if (pick.targeted && !aimed) {
         note = `No enemy is placed where ${WEAKNESS_LABEL[pick.targeted.source]} would get it wrong, so this one is not targeted.`;
@@ -913,18 +930,33 @@ class Game {
   // on the request going out, or null if it never reaches the supporting arm.
   outboundDelay(pid) {
     const prof = this.linkProfile(pid);
-    if (Math.random() < prof.sevDrop * this.cfg.dropRate) return null;
-    return 0.3 + (prof.sevDelay > 0 ? rand(this.cfg.delayMin, this.cfg.delayMax) * prof.sevDelay : 0);
+    if (this.rng() < prof.sevDrop * this.cfg.dropRate) return null;
+    return 0.3 + (prof.sevDelay > 0 ? this.rand(this.cfg.delayMin, this.cfg.delayMax) * prof.sevDelay : 0);
+  }
+
+  // Every input from outside the engine is logged, in order, with the moment it
+  // arrived: with the seed, that is the whole exercise.
+  logInput(via, pid, a) {
+    const entry = { t: this.t, via, pid: pid || null, a: structuredClone(a) };
+    this.inputs.push(entry);
+    return entry;
   }
 
   action(pid, a) {
+    const entry = this.logInput('trainee', pid, a || {});
+    const r = this.act(pid, a || {});
+    entry.ok = !(r && r.error);
+    return r;
+  }
+
+  act(pid, a) {
     if (!PIDS.includes(pid)) return { error: 'unknown callsign' };
     if (a.type === 'identify') {
       // works in the lobby too: the name is what carries a person's record between rounds
       const name = String(a.name || '').replace(/[^\p{L}\p{N} .'-]/gu, '').trim().slice(0, 40);
       // A page announcing itself on connect with no saved name — a second
       // screen, a judge's phone — must not wipe the name of whoever is playing.
-      if (name) this.who[pid] = name;
+      if (name) { this.who[pid] = name; this.namesSeen.add(name); }
       else if (!a.auto) delete this.who[pid];
       this.engaged.add(pid);
       return { ok: true, who: this.whoOf(pid) };
@@ -996,7 +1028,7 @@ class Game {
         // a track that is the subject of an open disagreement is decided there
         const open = this.disputes.find((d) => d.pid === pid && d.track === a.track && !d.answer && !d.froze && !d.lost);
         if (open && (a.mark === 'CONFIRMED' || a.mark === 'DISMISSED')) {
-          return this.action(pid, { type: 'resolve', dispute: open.id, answer: a.mark === 'CONFIRMED' ? 'present' : 'absent', confidence: a.confidence, rationale });
+          return this.act(pid, { type: 'resolve', dispute: open.id, answer: a.mark === 'CONFIRMED' ? 'present' : 'absent', confidence: a.confidence, rationale });
         }
         tr.mark = a.mark;
         ref = a.track;
@@ -1127,10 +1159,40 @@ class Game {
     return { ok: true, decision: dec, feedback };
   }
 
+  // What a commander's own screen may be told about the order they just gave.
+  // The full decision carries the truth (was it a phantom, was the call right,
+  // how good their picture was) and is for the instructor and the debrief only.
+  traineeResult(r) {
+    if (!r || r.error) return r;
+    const out = { ok: true };
+    for (const k of ['who', 'feedback', 'silent', 'note']) if (r[k] != null) out[k] = r[k];
+    if (r.decision) {
+      const d = r.decision;
+      out.decision = { id: d.id, clock: d.clock, type: d.type, desc: d.desc, rationale: d.rationale, lost: d.lost, precedence: d.precedence || null };
+    }
+    return out;
+  }
+
   // =========================================================================
   // Instructor / red cell actions
   // =========================================================================
-  admin(a, byRedCell = false) {
+  // via: who is acting. 'instructor' is an input from outside; anything else
+  // ('redcell', 'director', 'script', 'trigger') is the engine acting on its own,
+  // logged for the record and regenerated, not replayed, on a rerun.
+  admin(a, via = 'instructor') {
+    if (via === true) via = 'redcell';
+    else if (!via) via = 'instructor';
+    a = a || {};
+    const entry = this.logInput(via, a.pid || null, a);
+    const r = this.control(a, via);
+    // a reset starts a new log, so the entry that caused it is not in it
+    if (this.inputs.includes(entry)) entry.ok = !(r && r.error);
+    return r;
+  }
+
+  control(a, via) {
+    const byRedCell = via !== 'instructor';
+    const BY = via === 'instructor' ? 'INSTRUCTOR' : via === 'redcell' ? 'REDCELL' : String(via).toUpperCase();
     switch (a.type) {
       case 'start':
         if (this.status === 'LOBBY' || this.status === 'PAUSED') {
@@ -1152,18 +1214,20 @@ class Game {
       case 'end':
         if (this.status !== 'ENDED') this.end('Ended by instructor');
         break;
+      // `seed` on any of these starts the next run as the same exercise as an
+      // earlier one: same seed, same scenario and settings, same draws.
       case 'reset':
-        this.reset(a.scenario || this.scenario.id, a.config || {});
+        this.reset(a.scenario || this.scenario.id, a.config || {}, a.seed);
         break;
       case 'scenario':
         // Allowed from the lobby, and after ENDEX so the next exercise can be set
         // up straight away; refused mid-exercise, which would destroy the run.
         if (this.status === 'RUNNING' || this.status === 'PAUSED') return { error: 'End the exercise before changing the scenario' };
-        this.reset(a.id || this.scenario.id, a.config || {});
+        this.reset(a.id || this.scenario.id, a.config || {}, a.seed);
         break;
       case 'config':
         if (this.status === 'RUNNING' || this.status === 'PAUSED') return { error: 'End the exercise before changing the settings' };
-        this.reset(this.scenario.id, sanitizeConfig(a.config));
+        this.reset(this.scenario.id, sanitizeConfig(a.config), a.seed);
         break;
 
       case 'link': {
@@ -1175,7 +1239,7 @@ class Game {
         else if (['delay', 'drop', 'garble'].includes(a.mode)) L[a.mode] = !L[a.mode];
         else return { error: 'unknown link mode' };
         const flags = ['delay', 'drop', 'garble'].filter((k) => L[k]);
-        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'link', flags, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'link', flags, by: BY });
         this.logEvent('inject', `EW: ${a.pid} net → ${flags.length ? flags.join('+').toUpperCase() : 'CLEAR'}`, { pid: a.pid, severity: flags.length ? 'high' : 'low' });
         break;
       }
@@ -1188,7 +1252,7 @@ class Game {
         // a phantom comes through the drone feed unless it is passed off as a flank commander's sighting
         const viaScout = PIDS.includes(a.source) && a.source !== a.pid;
         const source = viaScout ? a.source : 'DRONE FEED';
-        this.fakes.push({ track, to: a.pid, x, y, type: etype, t: r1(this.t), clock: this.missionClock(), source, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.fakes.push({ track, to: a.pid, x, y, type: etype, t: r1(this.t), clock: this.missionClock(), source, by: BY });
         this.comms.send(a.pid, {
           kind: viaScout ? 'SPOTREP' : 'ISR', from: source, source: viaScout ? 'SCOUT' : 'UAV', forged: true, trueFrom: 'RED CELL',
           text: viaScout
@@ -1196,7 +1260,7 @@ class Game {
             : `DRONE FEED ${track}: ENEMY ${etype} x4 grid ${T.gridRef(x, y)}, moving S.`,
           contacts: [{ track, type: etype, x, y, fake: true }],
         }, viaScout ? source : null);
-        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'fake', track, x, y, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'fake', track, x, y, by: BY });
         this.logEvent('inject', `DECEPTION: phantom ${etype} ${track} injected to ${a.pid} at ${T.gridRef(x, y)}, spoofed as coming from ${source}`, { pid: a.pid, severity: 'high' });
         break;
       }
@@ -1206,9 +1270,9 @@ class Game {
         const tr = this.beliefs[a.pid].tracks[a.track];
         if (!tr) return { error: 'that commander does not hold this track' };
         const e = tr.enemyId && this.enemies.find((x) => x.id === tr.enemyId);
-        this.falseBdas[a.pid].push({ track: a.track, enemyId: tr.enemyId, type: tr.type, t: r1(this.t), clock: this.missionClock(), received: false, outcome: null, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.falseBdas[a.pid].push({ track: a.track, enemyId: tr.enemyId, type: tr.type, t: r1(this.t), clock: this.missionClock(), received: false, outcome: null, by: BY });
         this.comms.send(a.pid, { kind: 'BDA', from: 'BN HQ', forged: true, text: `BDA: ${a.track} ${tr.type} DESTROYED — no further threat from this track.`, kill: a.track, falseBda: true });
-        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'falseBda', track: a.track, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'falseBda', track: a.track, by: BY });
         this.logEvent('inject', `CYBER: false kill report for ${a.track} (${tr.type}${e && e.alive ? ', still live' : ''}) sent to ${a.pid}`, { pid: a.pid, severity: 'high' });
         break;
       }
@@ -1218,9 +1282,9 @@ class Game {
         const x = clamp(+a.x, 0, T.W), y = clamp(+a.y, 0, T.H);
         const id = 'FO' + (++this.seq);
         const text = String(a.text || `BN HQ ORDER: ${a.pid} break contact and reposition to grid ${T.gridRef(x, y)} immediately. Acknowledge.`).slice(0, 200);
-        this.forgedOrders[a.pid].push({ id, x, y, grid: T.gridRef(x, y), t: r1(this.t), clock: this.missionClock(), text, received: false, outcome: null, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.forgedOrders[a.pid].push({ id, x, y, grid: T.gridRef(x, y), t: r1(this.t), clock: this.missionClock(), text, received: false, outcome: null, by: BY });
         this.comms.send(a.pid, { kind: 'ORDER', from: 'BN HQ', forged: true, trueFrom: 'RED CELL', text, order: { id, x, y } });
-        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'forgedOrder', x, y, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'forgedOrder', x, y, by: BY });
         this.logEvent('inject', `CYBER: forged HQ order sent to ${a.pid} — reposition to ${T.gridRef(x, y)}`, { pid: a.pid, severity: 'high' });
         break;
       }
@@ -1230,7 +1294,7 @@ class Game {
         const secs = clamp(+a.seconds || 30, 5, 180);
         this.spoofed[a.pid] = this.t + secs;
         this.spoofVec[a.pid] = null;
-        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'spoof', seconds: secs, by: byRedCell ? 'REDCELL' : 'INSTRUCTOR' });
+        this.interventions.push({ t: r1(this.t), clock: this.missionClock(), pid: a.pid, kind: 'spoof', seconds: secs, by: BY });
         this.logEvent('inject', `CYBER: GPS spoofing of ${a.pid}'s position reports for ${secs}s — teammates will see them in the wrong place`, { pid: a.pid, severity: 'high' });
         break;
       }
@@ -1278,7 +1342,7 @@ class Game {
       }
 
       case 'contradiction': {
-        const r = this.contradiction(a.pid, { by: byRedCell ? 'REDCELL' : 'INSTRUCTOR', variant: a.variant, quiet: byRedCell });
+        const r = this.contradiction(a.pid, { by: BY, variant: a.variant, quiet: byRedCell });
         if (r.error) return r;
         return { ok: true, note: r.note || null, variant: r.variant };
       }
@@ -1310,6 +1374,8 @@ class Game {
     this.sample(1);
     this.recorder.capture(this.t, this);
     this.logEvent('control', 'ENDEX — ' + reason);
+    // the records as this run found them, before it adds itself: a rerun starts from these
+    this.profiles0 = this.profiles.snapshot([...this.namesSeen]);
     this.aar = buildReport(this);
     const names = [];
     for (const p of PIDS) {
@@ -1332,8 +1398,10 @@ class Game {
     const prof = this.linkProfile(pid);
     const spoof = this.ew.spoofAt(u);
     const gpsDegraded = this.spoofed[pid] > this.t || spoof.severity > 0.3;
-    const sig = prof.severity > 0 ? clamp(1 - prof.severity, 0.04, 0.55) * rand(0.8, 1.2) : rand(0.85, 1);
-    const df = prof.severity > 0 ? this.ew.dfCut(u) : null;
+    // screen noise only: drawn from a hash of the moment, never from the exercise's stream
+    const n1 = noise(this.seed, pid, Math.round(this.t * 5), 'sig'), n2 = noise(this.seed, pid, Math.round(this.t * 5), 'df');
+    const sig = prof.severity > 0 ? clamp(1 - prof.severity, 0.04, 0.55) * (0.8 + 0.4 * n1) : 0.85 + 0.15 * n1;
+    const df = prof.severity > 0 ? this.ew.dfCut(u, n2) : null;
     const task = this.intentTaskFor(pid);
     return {
       status: this.status, t: r1(this.t), clock: this.missionClock(),
@@ -1381,6 +1449,7 @@ class Game {
   instructorView() {
     return {
       status: this.status, t: r1(this.t), clock: this.missionClock(),
+      seed: this.seed, seedHex: seedHex(this.seed),
       remaining: Math.max(0, Math.round(this.cfg.duration - this.t)),
       cfg: this.cfg, scenario: this.scenarioBrief(),
       units: this.units.map((u) => ({ pid: u.pid, name: u.name, x: r1(u.x), y: r1(u.y), tx: u.tx, ty: u.ty, hp: Math.max(0, Math.round(u.hp)), alive: u.alive, posture: u.posture,

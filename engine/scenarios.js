@@ -111,6 +111,8 @@ function sanitizeConfig(cfg = {}) {
   if (cfg.ewEnabled != null) out.ewEnabled = !!cfg.ewEnabled && cfg.ewEnabled !== 'false';
   if (cfg.disputeFeedback != null) out.disputeFeedback = !!cfg.disputeFeedback && cfg.disputeFeedback !== 'false';
   if (cfg.redcell != null && ['OFF', 'ASSIST', 'AUTO'].includes(String(cfg.redcell).toUpperCase())) out.redcell = String(cfg.redcell).toUpperCase();
+  // counterfactual switches, set by a rerun rather than from the console
+  for (const k of ['commsClear', 'noDeception']) if (cfg[k] != null) out[k] = cfg[k] === true || cfg[k] === 'true';
   if (out.delayMax != null && out.delayMin != null && out.delayMax < out.delayMin) out.delayMax = out.delayMin;
   return out;
 }

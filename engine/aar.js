@@ -9,6 +9,7 @@
 const T = require('../public/terrain.js');
 const { calibrate, describeCalibration, emptyTrust } = require('./calibration');
 const { SOURCES, DISPUTABLE, WEAKNESS_LABEL } = require('./sources');
+const { seedHex } = require('./rng');
 
 const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
@@ -388,6 +389,11 @@ function buildReport(sim) {
   return {
     generatedAt: new Date().toISOString(),
     startedAt: sim.startedAt,
+    // Seed + starting state + inputs = the whole exercise, re-runnable.
+    seed: sim.seed, seedHex: seedHex(sim.seed),
+    endT: sim.t,
+    cfg0: sim.cfg0, who0: sim.who0, profiles0: sim.profiles0 || {},
+    inputs: sim.inputs,
     scenario: { id: sim.scenario.id, name: sim.scenario.name, brief: sim.scenario.brief, area: sim.scenario.area, terrain: T.name },
     intent: sim.scenario.intent,
     endReason: sim.endReason,

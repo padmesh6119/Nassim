@@ -1,10 +1,12 @@
 (function () {
   const T = window.TERRAIN, C = window.MAPCOL;
   const PIDS = ['ALPHA', 'BRAVO', 'CHARLIE'];
-  const pid = new URLSearchParams(location.search).get('pid');
+  const qs = new URLSearchParams(location.search);
+  const pid = qs.get('pid');
+  const seat = qs.get('seat') || '';
   const $ = (id) => document.getElementById(id);
   const curtain = $('curtain');
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   if (!PIDS.includes(pid)) {
     curtain.style.display = 'flex';
@@ -12,6 +14,26 @@
       + PIDS.map((p) => `<a class="btn lg" href="/trainee?pid=${p}">${p}</a>`).join('') + '</div>';
     return;
   }
+  // A seat is opened with the four-digit code the instructor gives each commander,
+  // so a stray laptop or phone on the WiFi cannot give orders as somebody else.
+  function askSeat(note) {
+    curtain.style.display = 'flex';
+    curtain.innerHTML = `<h1>${pid}</h1>
+      <form class="whoami" id="seatForm">
+        <label for="seatCode">Seat code</label>
+        <input type="text" id="seatCode" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="4 digits">
+        <button class="btn go" type="submit">Open</button>
+        <span class="why2">${note || 'The instructor has a four-digit code for each seat.'}</span>
+      </form>`;
+    $('seatCode').focus();
+    $('seatForm').onsubmit = (ev) => {
+      ev.preventDefault();
+      const code = $('seatCode').value.trim();
+      if (!/^\d{4}$/.test(code)) return;
+      location.search = `?pid=${encodeURIComponent(pid)}&seat=${encodeURIComponent(code)}`;
+    };
+  }
+  if (!/^\d{4}$/.test(seat)) { askSeat(); return; }
   document.title = `${pid} — FOGLINE`;
   $('callsign').textContent = pid;
 
@@ -65,10 +87,12 @@
 
   async function act(body) {
     try {
-      const r = await fetch('/api/action', {
+      const res = await fetch('/api/action', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pid, ...body }),
-      }).then((x) => x.json());
+        body: JSON.stringify({ pid, seat, ...body }),
+      });
+      if (res.status === 401) { askSeat('That seat code was not accepted. Check it with the instructor.'); return { error: 'seat' }; }
+      const r = await res.json();
       if (r.error) toast(r.error, true);
       return r;
     } catch { toast('No connection to exercise control', true); return { error: 'network' }; }
@@ -274,7 +298,7 @@
 
   // ── stream ──────────────────────────────────────────────────────────
   let trackSig = '';
-  const es = new EventSource(`/events?role=trainee&pid=${pid}`);
+  const es = new EventSource(`/events?role=trainee&pid=${encodeURIComponent(pid)}&seat=${encodeURIComponent(seat)}`);
   es.addEventListener('history', (e) => { $('log').innerHTML = ''; serial = 0; JSON.parse(e.data).forEach((m) => addEntry(m)); });
   es.addEventListener('msg', (e) => {
     const m = JSON.parse(e.data);
@@ -289,7 +313,12 @@
     for (const k of Object.keys(trail)) delete trail[k];
     for (const k of Object.keys(freshUntil)) delete freshUntil[k];
   });
-  es.onerror = () => { $('status').textContent = 'LINK LOST'; $('status').className = 'state ENDED'; };
+  es.onerror = () => {
+    $('status').textContent = 'LINK LOST'; $('status').className = 'state ENDED';
+    // never connected at all: most likely the seat code, so ask rather than retry forever
+    if (!S) act({ type: 'identify', name: '', auto: true }).then((r) => { if (r.error === 'seat') es.close(); });
+  };
+  es.addEventListener('reload', () => location.reload());
 
   es.addEventListener('state', (e) => {
     S = JSON.parse(e.data);

@@ -19,7 +19,7 @@ const { spawn } = require('child_process');
 const CHROME = process.env.CHROME_BIN
   || (process.platform === 'darwin'
     ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    : (require('child_process').execSync('which google-chrome || which chromium-browser || which chromium 2>/dev/null', { encoding: 'utf8' }).trim() || 'google-chrome'));
+    : (require('child_process').execSync('which google-chrome || which google-chrome-stable || which chromium-browser || which chromium 2>/dev/null || true', { encoding: 'utf8' }).trim() || 'google-chrome'));
 const CDP_PORT = 9333;
 
 const argv = process.argv.slice(2);

@@ -1,13 +1,13 @@
 {
   "name": "fogline",
   "version": "1.0.0",
-  "description": "FOGLINE \u2014 immersive multi-domain decision-making trainer for degraded communication environments",
+  "description": "FOGLINE — immersive multi-domain decision-making trainer for degraded communication environments",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/engine.test.js && node test/judgement.test.js && node test/frontend.test.js",
-    "test:fuzz": "FOGLINE_FUZZ=1 node test/engine.test.js && node test/judgement.test.js && node test/frontend.test.js",
-    "shots": "node tools/shoot.js /tmp/shots 3000 \"instructor=/instructor@1760x1040\" \"trainee=/trainee?pid=BRAVO@1600x1000\" \"report=/report@1420x2300\" \"replay=/replay@1600x1000\" \"index=/@1200x980\""
+    "test": "node test/engine.test.js && node test/judgement.test.js && node test/frontend.test.js && node test/server.test.js",
+    "test:fuzz": "FOGLINE_FUZZ=1 npm test",
+    "shots": "node tools/shoot.js ${SHOT_DIR:-/tmp/shots} ${SHOT_PORT:-3000} \"instructor=/instructor?token=$INSTRUCTOR_TOKEN@1760x1040\" \"trainee=/trainee?pid=BRAVO&seat=$SEAT_BRAVO@1600x1000\" \"report=/report?token=$INSTRUCTOR_TOKEN@1420x2300\" \"replay=/replay?token=$INSTRUCTOR_TOKEN@1600x1000\" \"index=/@1200x980\""
   },
   "engines": {
     "node": ">=18"
