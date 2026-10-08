@@ -2,7 +2,7 @@
 
 **An immersive multi-domain decision-making trainer for degraded communication environments.**
 
-Smart India Hackathon · Problem statement **26248** · Ministry of Defence · Defence Services Staff College.
+Multi-domain decision-making trainer for degraded communication environments.
 
 Existing training formats — TEWTs, command post exercises — quietly assume that every radio call
 arrives, on time, and is true. Electronic warfare and cyber disruption break exactly that assumption,

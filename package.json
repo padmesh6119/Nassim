@@ -1,7 +1,7 @@
 {
   "name": "fogline",
   "version": "1.0.0",
-  "description": "FOGLINE \u2014 immersive multi-domain decision-making trainer for degraded communication environments (SIH PS 26248, Defence Services Staff College)",
+  "description": "FOGLINE \u2014 immersive multi-domain decision-making trainer for degraded communication environments",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

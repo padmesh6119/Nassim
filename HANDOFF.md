@@ -14,8 +14,7 @@ reviewed, not as a thing to patch.
 
 ## 1. What this is
 
-Smart India Hackathon, problem statement **26248**, Ministry of Defence / Defence Services Staff
-College.
+FOGLINE — immersive multi-domain decision-making trainer for degraded communication environments.
 
 > An AR/VR or web-based tool that places small-team and sub-unit commanders in multi-domain scenarios
 > (land–air–cyber–EW) where information feeds are deliberately incomplete, delayed or contradictory,
@@ -52,7 +51,7 @@ This is why there are zero dependencies and no build step.
 ## 2. How to run it
 
 ```bash
-cd /Users/pranavmuthukumaran/padmesh-sih
+cd /path/to/fogline
 npm start        # server on :3000, prints a URL per station
 npm test         # 48 tests: 35 engine + 13 frontend contract
 npm run test:fuzz   # same, with the real RNG instead of the seeded one
@@ -277,7 +276,7 @@ The previous session did not ask these, and should have:
    what the screens even are)?
 2. Is there a reference — a product, a game, a dashboard, an aesthetic — that looks like what they had
    in mind? One screenshot would be worth more than any amount of further guessing.
-3. Who is the real audience for the look: DSSC officers who want it to feel like real military software,
+3. Who is the real audience for the look: staff officers who want it to feel like real military software,
    or hackathon judges who want it to look impressive in 5 minutes? These pull in different directions.
 4. Is AR/VR expected? The problem statement says "AR/VR **or** web-based". The current build is web, and
    the user has not objected, but it has not been confirmed either.

@@ -6,9 +6,7 @@
 
 ## 1. In one minute
 
-**FOGLINE** is our Smart India Hackathon entry for problem statement **26248** (Ministry of Defence,
-Defence Services Staff College): *an immersive multi-domain decision-making trainer for degraded
-communication environments.*
+**FOGLINE** is an immersive multi-domain decision-making trainer for degraded communication environments.
 
 Three junior commanders each sit at a laptop and fight the same battle on a map. Their radios lie to
 them: reports arrive late, go missing, get garbled, or are planted by an adversary. An instructor
@@ -146,7 +144,7 @@ A test checks that a commander's screen never receives ground truth.
 ## 6. The directory map
 
 ```
-padmesh-sih/
+fogline/
 ├── server.js            the server
 ├── package.json         scripts only — there are no dependencies
 ├── README.md            the product description and the 5-minute demo script
